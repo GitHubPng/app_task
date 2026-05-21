@@ -3,8 +3,7 @@
 
     <application
         android:label="App Task"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:name="${applicationName}">
 
         <activity
             android:name=".MainActivity"
@@ -31,8 +30,5 @@
             android:value="2" />
 
     </application>
-
-    <!-- Required for SQLite on older Android versions -->
-    <uses-permission android:name="android.permission.INTERNET"/>
 
 </manifest>
