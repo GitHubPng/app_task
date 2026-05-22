@@ -59,7 +59,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       initialDate: initial.isBefore(now) ? now : initial,
       firstDate: now,
       lastDate: DateTime(now.year + 5),
-      locale: const Locale('pt', 'BR'),
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
