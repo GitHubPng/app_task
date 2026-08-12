@@ -2,28 +2,34 @@ import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../utils/app_theme.dart';
 import '../utils/validators.dart';
+import '../utils/weekday_utils.dart';
 import 'subtask_widget.dart';
 
 class TaskTile extends StatelessWidget {
   final Task task;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final ValueChanged<bool> onToggleCompleted;
-  final ValueChanged<int> onToggleSubtask;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+  final ValueChanged<bool>? onToggleCompleted;
+  final ValueChanged<int>? onToggleSubtask;
+
+  /// Modo somente leitura (tela Arquivadas).
+  final bool readOnly;
 
   const TaskTile({
     super.key,
     required this.task,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onToggleCompleted,
-    required this.onToggleSubtask,
+    this.onEdit,
+    this.onDelete,
+    this.onToggleCompleted,
+    this.onToggleSubtask,
+    this.readOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final completedSubtasks = task.subtasks.where((s) => s.completed).length;
     final totalSubtasks = task.subtasks.length;
+    final canToggle = !readOnly && onToggleCompleted != null;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -46,18 +52,18 @@ class TaskTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Header row
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Checkbox
                 Transform.scale(
                   scale: 1.1,
                   child: Checkbox(
                     value: task.completed,
-                    onChanged: (val) => onToggleCompleted(val ?? false),
+                    onChanged: canToggle
+                        ? (val) => onToggleCompleted!(val ?? false)
+                        : null,
                     activeColor: AppTheme.success,
                     shape: const CircleBorder(),
                     side: BorderSide(
@@ -69,7 +75,6 @@ class TaskTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 4),
-                // Title + date
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,48 +92,28 @@ class TaskTile extends StatelessWidget {
                               : TextDecoration.none,
                         ),
                       ),
-                      if (task.dueDate != null && task.dueDate!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.calendar_today_rounded,
-                                size: 11,
-                                color: AppTheme.textSecondary,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                Validators.formatDateDisplay(task.dueDate),
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppTheme.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      const SizedBox(height: 4),
+                      _buildMetaRow(),
                     ],
                   ),
                 ),
-                // Action icons
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  color: AppTheme.primary,
-                  onPressed: onEdit,
-                  tooltip: 'Editar',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline_rounded, size: 20),
-                  color: AppTheme.danger,
-                  onPressed: onDelete,
-                  tooltip: 'Excluir',
-                ),
+                if (!readOnly) ...[
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    color: AppTheme.primary,
+                    onPressed: onEdit,
+                    tooltip: 'Editar',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                    color: AppTheme.danger,
+                    onPressed: onDelete,
+                    tooltip: 'Excluir',
+                  ),
+                ],
               ],
             ),
           ),
-
-          // ── Description
           if (task.description != null && task.description!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 16, 8),
@@ -143,8 +128,6 @@ class TaskTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-
-          // ── Subtasks progress + list
           if (task.subtasks.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 16, 6),
@@ -183,7 +166,9 @@ class TaskTile extends StatelessWidget {
                   final sub = entry.value;
                   return SubtaskWidget(
                     subtask: sub,
-                    onToggle: () => onToggleSubtask(index),
+                    onToggle: (!readOnly && onToggleSubtask != null)
+                        ? () => onToggleSubtask!(index)
+                        : null,
                   );
                 }).toList(),
               ),
@@ -192,6 +177,56 @@ class TaskTile extends StatelessWidget {
             const SizedBox(height: 4),
         ],
       ),
+    );
+  }
+
+  Widget _buildMetaRow() {
+    final chips = <Widget>[];
+
+    if (task.time != null && task.time!.isNotEmpty) {
+      chips.add(_metaChip(Icons.schedule_rounded, task.time!));
+    }
+
+    if (task.isRecurring) {
+      final days = task.recurringDaysList
+          .map(WeekdayUtils.shortLabel)
+          .where((s) => s.isNotEmpty)
+          .join(' · ');
+      if (days.isNotEmpty) {
+        chips.add(_metaChip(Icons.repeat_rounded, days));
+      }
+    } else if (task.dueDate != null && task.dueDate!.isNotEmpty) {
+      chips.add(
+        _metaChip(
+          Icons.calendar_today_rounded,
+          Validators.formatDateDisplay(task.dueDate),
+        ),
+      );
+    }
+
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: chips,
+    );
+  }
+
+  Widget _metaChip(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 11, color: AppTheme.textSecondary),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: const TextStyle(
+            fontSize: 12,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+      ],
     );
   }
 }

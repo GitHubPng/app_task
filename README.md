@@ -1,6 +1,6 @@
 # App Task 📋
 
-Gerenciador de tarefas desenvolvido pela **NexCode Soluções em Tecnologia**.
+Gerenciador de rotina semanal e tarefas avulsas — **NexCode Soluções em Tecnologia**.
 
 > "Organize. Execute. Conclua."
 
@@ -25,28 +25,31 @@ Gerenciador de tarefas desenvolvido pela **NexCode Soluções em Tecnologia**.
 lib/
  ├── main.dart
  ├── database/
- │     └── database_helper.dart      # Singleton SQLite, CRUD de baixo nível
+ │     └── database_helper.dart      # Singleton SQLite, migração, seed, CRUD
  ├── models/
- │     ├── task.dart                 # Entidade Task com toMap/fromMap
- │     └── subtask.dart              # Entidade Subtask com toMap/fromMap
+ │     ├── task.dart                 # Task (+ recorrência / arquivamento)
+ │     ├── task_completion.dart      # Conclusão por data (recorrentes)
+ │     └── subtask.dart
  ├── screens/
- │     ├── splash_screen.dart        # Splash 2s com animação
- │     ├── home_screen.dart          # Lista, busca, stats
- │     └── task_form_screen.dart     # Formulário criar/editar
+ │     ├── splash_screen.dart
+ │     ├── home_screen.dart          # Abas por dia, busca, stats
+ │     ├── task_form_screen.dart     # Recorrente ou avulsa
+ │     └── archived_screen.dart      # Histórico somente leitura
  ├── services/
- │     └── task_service.dart         # Camada intermediária UI ↔ banco
+ │     └── task_service.dart
  ├── widgets/
- │     ├── task_tile.dart            # Card de tarefa na lista
- │     ├── empty_state.dart          # Estado vazio
- │     └── subtask_widget.dart       # Item de subtarefa
+ │     ├── task_tile.dart
+ │     ├── empty_state.dart
+ │     └── subtask_widget.dart
  └── utils/
-       ├── app_theme.dart            # Tema, cores, estilos globais
-       └── validators.dart           # Validações de título, data, formatação
+       ├── app_theme.dart
+       ├── validators.dart
+       └── weekday_utils.dart
 ```
 
 ---
 
-## Banco de Dados (apptask.db)
+## Banco de Dados (apptask.db, versão 2)
 
 ### Tabela `tasks`
 ```sql
@@ -56,7 +59,11 @@ CREATE TABLE tasks(
     description TEXT,
     due_date TEXT,
     completed INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    is_recurring INTEGER DEFAULT 0,
+    recurring_days TEXT,          -- ex: "1,3,5" (1=Seg ... 7=Dom)
+    time TEXT,                    -- ex: "08:00"
+    archived INTEGER DEFAULT 0
 );
 ```
 
@@ -71,6 +78,20 @@ CREATE TABLE subtasks(
 );
 ```
 
+### Tabela `task_completions`
+```sql
+CREATE TABLE task_completions(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    completion_date TEXT NOT NULL,  -- YYYY-MM-DD
+    completed INTEGER DEFAULT 1,
+    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    UNIQUE(task_id, completion_date)
+);
+```
+
+Recorrentes usam `task_completions` por data (reset diário natural). Avulsas usam `tasks.completed` e arquivam ao concluir.
+
 ---
 
 ## Como Rodar
@@ -83,16 +104,9 @@ CREATE TABLE subtasks(
 ### Passos
 
 ```bash
-# 1. Clonar o repositório
-git clone https://github.com/SEU_USUARIO/app_task.git
+git clone https://github.com/GitHubPng/app_task.git
 cd app_task
-
-# 2. Instalar dependências
 flutter pub get
-
-# 3. Conectar dispositivo Android ou iniciar emulador
-
-# 4. Rodar o app
 flutter run
 ```
 
@@ -102,15 +116,17 @@ flutter run
 
 | RF | Funcionalidade | Status |
 |----|---------------|--------|
-| RF01 | Cadastrar tarefa (título, desc, data, subtarefas) | ✅ |
-| RF02 | Listar tarefas (pendentes primeiro, mais recentes no topo) | ✅ |
+| RF01 | Cadastrar tarefa (recorrente ou avulsa, subtarefas) | ✅ |
+| RF02 | Listar por dia da semana (horário + avulsas do dia) | ✅ |
 | RF03 | Pesquisar tarefa em tempo real pelo título | ✅ |
 | RF04 | Editar tarefa | ✅ |
 | RF05 | Excluir tarefa (permanente, com confirmação) | ✅ |
-| RF06 | Marcar como concluída (checkbox, texto riscado) | ✅ |
+| RF06 | Marcar como concluída (checkbox; recorrente por data) | ✅ |
 | RF07 | Gerenciar subtarefas (add, concluir, excluir) | ✅ |
 | RF08 | Estado vazio com mensagem orientativa | ✅ |
 | RF09 | Splash Screen com logo e animação (2 segundos) | ✅ |
+| RF10 | Tela Arquivadas (histórico avulsas concluídas) | ✅ |
+| RF11 | Seed da rotina semanal no primeiro `onCreate` | ✅ |
 
 ---
 
@@ -119,13 +135,19 @@ flutter run
 | RN | Regra | Implementação |
 |----|-------|--------------|
 | RN01 | Título obrigatório | `Validators.validateTitle()` |
-| RN02 | Data não retroativa | `Validators.isDateInPast()` + DatePicker bloqueado |
+| RN02 | Data não retroativa (avulsas) | `Validators.isDateInPast()` + DatePicker |
 | RN03 | Conclusão apenas por checkbox | Sem automação por data |
-| RN04 | Exclusão permanente | Dialog de confirmação, sem lixeira |
-| RN05 | Subtarefa vinculada à tarefa pai | `ON DELETE CASCADE` no SQLite |
-| RN06 | Edição irrestrita | Sempre habilitada independente do status |
+| RN04 | Exclusão permanente | Dialog de confirmação |
+| RN05 | Subtarefa vinculada à tarefa pai | `ON DELETE CASCADE` |
+| RN06 | Edição irrestrita | Sempre habilitada |
 | RN07 | Busca apenas no título | `WHERE title LIKE '%query%'` |
-| RN08 | Ordenação: pendentes primeiro, mais recentes no topo | `ORDER BY completed ASC, created_at DESC` |
+| RN08 | Ordenação do dia por horário | `time` ASC |
+| RN-NOVA-01 | Recorrente: 1+ dias da semana | Chips no formulário |
+| RN-NOVA-02 | Conclusão recorrente por data | `task_completions` |
+| RN-NOVA-03 | Recorrente não arquiva sozinha | Só some como “feita hoje” |
+| RN-NOVA-04 | Avulsa arquiva ao concluir | `archived = 1` |
+| RN-NOVA-05 | Arquivadas só consulta | Sem restaurar/editar/excluir |
+| RN-NOVA-06 | Excluir recorrente limpa histórico | CASCADE em completions |
 
 ---
 
@@ -133,9 +155,9 @@ flutter run
 
 ```yaml
 dependencies:
-  sqflite: ^2.3.3    # SQLite para Flutter
-  path: ^1.9.0       # Localização do banco no dispositivo
-  intl: ^0.20.2      # Formatação de datas
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  intl: ^0.19.0
 ```
 
 ---
@@ -144,16 +166,14 @@ dependencies:
 
 | Caso | Esperado |
 |------|---------|
-| Criar tarefa com título | Salva e aparece na lista |
-| Criar sem título | Mensagem de erro "Título obrigatório" |
-| Selecionar data passada | DatePicker bloqueia, validação barra |
-| Editar tarefa | Dados atualizados na lista |
-| Excluir tarefa | Removida permanentemente com subtarefas |
-| Fechar e reabrir app | Dados persistem (SQLite) |
-| Concluir tarefa | Checkbox marca, texto riscado, vai para o final |
-| Pesquisar | Filtra em tempo real pelo título |
-| Lista vazia | Estado vazio com orientação |
-| Busca sem resultado | Estado vazio com "Nenhuma tarefa encontrada" |
+| Abrir app na 1ª vez | Rotina semanal seed aparece no dia certo |
+| Selecionar dia | Lista só recorrentes daquele dia + avulsas da data |
+| Concluir recorrente | Feita hoje; no dia seguinte volta desmarcada |
+| Concluir avulsa | Some da home e vai para Arquivadas |
+| Criar sem título | Erro "Título obrigatório" |
+| Recorrente sem dias | Erro pedindo ao menos um dia |
+| Buscar | Filtra em todos os dias (não só o selecionado) |
+| Excluir | Remove tarefa, subtarefas e completions |
 
 ---
 

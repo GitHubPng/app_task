@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/weekday_utils.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/task_tile.dart';
+import 'archived_screen.dart';
 import 'task_form_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,9 +23,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String _searchQuery = '';
 
+  /// Dia selecionado (1=Seg ... 7=Dom). Inicia no dia atual.
+  late int _selectedWeekday;
+
   @override
   void initState() {
     super.initState();
+    _selectedWeekday = DateTime.now().weekday;
     _loadTasks();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
@@ -40,9 +46,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadTasks({String? query}) async {
     if (!mounted) return;
     setState(() => _isLoading = true);
-    final tasks = await _taskService.getAllTasks(
-      searchQuery: query?.isNotEmpty == true ? query : null,
-    );
+
+    final q = query?.isNotEmpty == true ? query : null;
+    // Busca: todas as tarefas ativas. Sem busca: visão do dia selecionado.
+    final tasks = q != null
+        ? await _taskService.getAllTasks(
+            searchQuery: q,
+            weekday: _selectedWeekday,
+          )
+        : await _taskService.getTasksForWeekday(_selectedWeekday);
+
     if (!mounted) return;
     setState(() {
       _tasks = tasks;
@@ -58,6 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (result == true) _loadTasks(query: _searchQuery);
+  }
+
+  Future<void> _openArchived() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ArchivedScreen()),
+    );
   }
 
   Future<void> _confirmDelete(Task task) async {
@@ -109,7 +128,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _toggleTask(Task task, bool completed) async {
-    await _taskService.toggleTaskCompleted(task.id!, completed);
+    await _taskService.toggleTaskCompleted(
+      task: task,
+      completed: completed,
+      weekday: _selectedWeekday,
+    );
     _loadTasks(query: _searchQuery);
   }
 
@@ -149,48 +172,63 @@ class _HomeScreenState extends State<HomeScreen> {
             const Text('App Task'),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.archive_outlined),
+            tooltip: 'Arquivadas',
+            onPressed: _openArchived,
+          ),
+        ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(64),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Pesquisar tarefas...',
-                prefixIcon: const Icon(
-                  Icons.search_rounded,
-                  color: AppTheme.textSecondary,
-                ),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () {
-                          _searchController.clear();
-                          _loadTasks();
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: AppTheme.background,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: AppTheme.border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: AppTheme.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide:
-                      const BorderSide(color: AppTheme.primary, width: 2),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+          preferredSize: Size.fromHeight(isSearching ? 64 : 120),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Pesquisar tarefas...',
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      color: AppTheme.textSecondary,
+                    ),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              _loadTasks();
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: AppTheme.background,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: AppTheme.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: AppTheme.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: AppTheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
                 ),
               ),
-            ),
+              // Seletor de dia — oculto durante busca (busca é global).
+              if (!isSearching) _buildWeekdaySelector(),
+            ],
           ),
         ),
       ),
@@ -205,7 +243,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onRefresh: () => _loadTasks(query: _searchQuery),
                   child: Column(
                     children: [
-                      // Stats bar
                       if (!isSearching) _buildStatsBar(),
                       Expanded(
                         child: ListView.builder(
@@ -237,6 +274,59 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+    );
+  }
+
+  Widget _buildWeekdaySelector() {
+    final today = DateTime.now().weekday;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Row(
+        children: List.generate(7, (i) {
+          final day = i + 1;
+          final selected = _selectedWeekday == day;
+          final isToday = day == today;
+
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Material(
+                color: selected
+                    ? AppTheme.primary
+                    : isToday
+                        ? AppTheme.primary.withOpacity(0.08)
+                        : AppTheme.background,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () {
+                    setState(() => _selectedWeekday = day);
+                    _loadTasks();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    alignment: Alignment.center,
+                    child: Text(
+                      WeekdayUtils.shortLabels[i],
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight:
+                            selected || isToday ? FontWeight.w700 : FontWeight.w500,
+                        color: selected
+                            ? Colors.white
+                            : isToday
+                                ? AppTheme.primary
+                                : AppTheme.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
     );
   }
 

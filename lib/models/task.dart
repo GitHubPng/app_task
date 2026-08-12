@@ -9,6 +9,18 @@ class Task {
   String createdAt;
   List<Subtask> subtasks;
 
+  /// true = rotina semanal; false = tarefa avulsa
+  bool isRecurring;
+
+  /// Dias da semana: "1,3,5" (1=Seg ... 7=Dom). Nulo para avulsas.
+  String? recurringDays;
+
+  /// Horário "HH:mm" para ordenar a lista do dia.
+  String? time;
+
+  /// Avulsas arquivam ao concluir; recorrentes nunca arquivam sozinhas.
+  bool archived;
+
   Task({
     this.id,
     required this.title,
@@ -17,7 +29,26 @@ class Task {
     this.completed = false,
     required this.createdAt,
     this.subtasks = const [],
+    this.isRecurring = false,
+    this.recurringDays,
+    this.time,
+    this.archived = false,
   });
+
+  /// Converte "1,3,5" em lista de inteiros [1, 3, 5].
+  List<int> get recurringDaysList {
+    if (recurringDays == null || recurringDays!.trim().isEmpty) return [];
+    return recurringDays!
+        .split(',')
+        .map((e) => int.tryParse(e.trim()))
+        .whereType<int>()
+        .toList();
+  }
+
+  /// Indica se a tarefa recorrente está agendada para o dia (1–7).
+  bool occursOnWeekday(int weekday) {
+    return recurringDaysList.contains(weekday);
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -27,6 +58,10 @@ class Task {
       'due_date': dueDate,
       'completed': completed ? 1 : 0,
       'created_at': createdAt,
+      'is_recurring': isRecurring ? 1 : 0,
+      'recurring_days': recurringDays,
+      'time': time,
+      'archived': archived ? 1 : 0,
     };
   }
 
@@ -36,9 +71,13 @@ class Task {
       title: map['title'] as String,
       description: map['description'] as String?,
       dueDate: map['due_date'] as String?,
-      completed: (map['completed'] as int) == 1,
+      completed: (map['completed'] as int? ?? 0) == 1,
       createdAt: map['created_at'] as String,
       subtasks: [],
+      isRecurring: (map['is_recurring'] as int? ?? 0) == 1,
+      recurringDays: map['recurring_days'] as String?,
+      time: map['time'] as String?,
+      archived: (map['archived'] as int? ?? 0) == 1,
     );
   }
 
@@ -50,15 +89,27 @@ class Task {
     bool? completed,
     String? createdAt,
     List<Subtask>? subtasks,
+    bool? isRecurring,
+    String? recurringDays,
+    String? time,
+    bool? archived,
+    bool clearDueDate = false,
+    bool clearRecurringDays = false,
+    bool clearTime = false,
   }) {
     return Task(
       id: id ?? this.id,
       title: title ?? this.title,
       description: description ?? this.description,
-      dueDate: dueDate ?? this.dueDate,
+      dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
       completed: completed ?? this.completed,
       createdAt: createdAt ?? this.createdAt,
       subtasks: subtasks ?? this.subtasks,
+      isRecurring: isRecurring ?? this.isRecurring,
+      recurringDays:
+          clearRecurringDays ? null : (recurringDays ?? this.recurringDays),
+      time: clearTime ? null : (time ?? this.time),
+      archived: archived ?? this.archived,
     );
   }
 }

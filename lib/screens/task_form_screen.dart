@@ -4,6 +4,7 @@ import '../models/subtask.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/validators.dart';
+import '../utils/weekday_utils.dart';
 import '../widgets/subtask_widget.dart';
 
 class TaskFormScreen extends StatefulWidget {
@@ -22,6 +23,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   final _subtaskController = TextEditingController();
   final _taskService = TaskService();
 
+  /// true = recorrente semanal; false = avulsa
+  bool _isRecurring = true;
+
+  final Set<int> _selectedDays = {};
+  String? _selectedTime;
   String? _selectedDate;
   List<Subtask> _subtasks = [];
   bool _isSaving = false;
@@ -35,8 +41,14 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       final t = widget.task!;
       _titleController.text = t.title;
       _descriptionController.text = t.description ?? '';
+      _isRecurring = t.isRecurring;
       _selectedDate = t.dueDate;
+      _selectedTime = t.time;
+      _selectedDays.addAll(t.recurringDaysList);
       _subtasks = List.from(t.subtasks);
+    } else {
+      // Nova tarefa: dia de hoje pré-marcado na rotina.
+      _selectedDays.add(DateTime.now().weekday);
     }
   }
 
@@ -72,8 +84,40 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
     if (picked != null) {
       setState(() {
-        _selectedDate =
-            '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+        _selectedDate = WeekdayUtils.toDateString(picked);
+      });
+    }
+  }
+
+  Future<void> _pickTime() async {
+    TimeOfDay initial = TimeOfDay.now();
+    if (_selectedTime != null && _selectedTime!.contains(':')) {
+      final parts = _selectedTime!.split(':');
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h != null && m != null) {
+        initial = TimeOfDay(hour: h, minute: m);
+      }
+    }
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initial,
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: AppTheme.primary,
+            onPrimary: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedTime =
+            '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
       });
     }
   }
@@ -94,8 +138,16 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // RN02: date not in past (already enforced by picker, but double-check)
-    if (_selectedDate != null && Validators.isDateInPast(_selectedDate!)) {
+    // RN-NOVA-01: recorrente precisa de pelo menos um dia.
+    if (_isRecurring && _selectedDays.isEmpty) {
+      _showSnack('Selecione ao menos um dia da semana.', isError: true);
+      return;
+    }
+
+    // RN02: data não retroativa (só avulsas).
+    if (!_isRecurring &&
+        _selectedDate != null &&
+        Validators.isDateInPast(_selectedDate!)) {
       _showSnack('A data não pode ser anterior à data atual.', isError: true);
       return;
     }
@@ -104,16 +156,25 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
     try {
       final now = DateTime.now().toIso8601String();
+      final recurringDays =
+          _isRecurring ? WeekdayUtils.daysToStorage(_selectedDays.toList()) : null;
 
       if (_isEditMode) {
-        final updated = widget.task!.copyWith(
+        final toSave = Task(
+          id: widget.task!.id,
           title: _titleController.text.trim(),
           description: _descriptionController.text.trim().isEmpty
               ? null
               : _descriptionController.text.trim(),
-          dueDate: _selectedDate,
+          dueDate: _isRecurring ? null : _selectedDate,
+          completed: widget.task!.completed,
+          createdAt: widget.task!.createdAt,
+          isRecurring: _isRecurring,
+          recurringDays: recurringDays,
+          time: _isRecurring ? _selectedTime : null,
+          archived: widget.task!.archived,
         );
-        await _taskService.updateTask(updated, _subtasks);
+        await _taskService.updateTask(toSave, _subtasks);
         if (mounted) {
           _showSnack('Tarefa atualizada!');
           Navigator.of(context).pop(true);
@@ -124,8 +185,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           description: _descriptionController.text.trim().isEmpty
               ? null
               : _descriptionController.text.trim(),
-          dueDate: _selectedDate,
+          dueDate: _isRecurring ? null : _selectedDate,
           createdAt: now,
+          isRecurring: _isRecurring,
+          recurringDays: recurringDays,
+          time: _isRecurring ? _selectedTime : null,
         );
         await _taskService.createTask(task, _subtasks);
         if (mounted) {
@@ -185,7 +249,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Title
               _label('Título *'),
               const SizedBox(height: 8),
               TextFormField(
@@ -194,12 +257,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   hintText: 'Nome da tarefa',
-                  prefixIcon: Icon(Icons.title_rounded, color: AppTheme.primary),
+                  prefixIcon:
+                      Icon(Icons.title_rounded, color: AppTheme.primary),
                 ),
               ),
               const SizedBox(height: 20),
 
-              // ── Description
               _label('Descrição'),
               const SizedBox(height: 8),
               TextFormField(
@@ -208,43 +271,132 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   hintText: 'Detalhes opcionais...',
-                  prefixIcon: Icon(Icons.notes_rounded, color: AppTheme.primary),
+                  prefixIcon:
+                      Icon(Icons.notes_rounded, color: AppTheme.primary),
                   alignLabelWithHint: true,
                 ),
               ),
               const SizedBox(height: 20),
 
-              // ── Date
-              _label('Data de Vencimento'),
+              // Tipo de tarefa
+              _label('Tipo de tarefa'),
               const SizedBox(height: 8),
-              GestureDetector(
-                onTap: _pickDate,
-                child: AbsorbPointer(
-                  child: TextFormField(
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      hintText: 'Selecionar data',
-                      prefixIcon: const Icon(
-                        Icons.calendar_month_rounded,
-                        color: AppTheme.primary,
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment<bool>(
+                    value: true,
+                    label: Text('Recorrente'),
+                    icon: Icon(Icons.repeat_rounded, size: 18),
+                  ),
+                  ButtonSegment<bool>(
+                    value: false,
+                    label: Text('Avulsa'),
+                    icon: Icon(Icons.event_rounded, size: 18),
+                  ),
+                ],
+                selected: {_isRecurring},
+                onSelectionChanged: (set) {
+                  setState(() => _isRecurring = set.first);
+                },
+              ),
+              const SizedBox(height: 20),
+
+              if (_isRecurring) ...[
+                _label('Dias da semana *'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: List.generate(7, (i) {
+                    final day = i + 1;
+                    final selected = _selectedDays.contains(day);
+                    return FilterChip(
+                      label: Text(WeekdayUtils.shortLabels[i]),
+                      selected: selected,
+                      onSelected: (val) {
+                        setState(() {
+                          if (val) {
+                            _selectedDays.add(day);
+                          } else {
+                            _selectedDays.remove(day);
+                          }
+                        });
+                      },
+                      selectedColor: AppTheme.primary.withOpacity(0.18),
+                      checkmarkColor: AppTheme.primary,
+                      labelStyle: TextStyle(
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
+                        color: selected
+                            ? AppTheme.primary
+                            : AppTheme.textSecondary,
                       ),
-                      suffixIcon: _selectedDate != null
-                          ? IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setState(() => _selectedDate = null),
-                            )
-                          : null,
-                    ),
-                    controller: TextEditingController(
-                      text: Validators.formatDateDisplay(_selectedDate),
+                      side: BorderSide(
+                        color: selected ? AppTheme.primary : AppTheme.border,
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 20),
+                _label('Horário'),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: _pickTime,
+                  child: AbsorbPointer(
+                    child: TextFormField(
+                      readOnly: true,
+                      decoration: InputDecoration(
+                        hintText: 'Opcional — ordena a lista do dia',
+                        prefixIcon: const Icon(
+                          Icons.schedule_rounded,
+                          color: AppTheme.primary,
+                        ),
+                        suffixIcon: _selectedTime != null
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () =>
+                                    setState(() => _selectedTime = null),
+                              )
+                            : null,
+                      ),
+                      controller: TextEditingController(
+                        text: _selectedTime ?? '',
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ] else ...[
+                _label('Data de Vencimento'),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: _pickDate,
+                  child: AbsorbPointer(
+                    child: TextFormField(
+                      readOnly: true,
+                      decoration: InputDecoration(
+                        hintText: 'Selecionar data',
+                        prefixIcon: const Icon(
+                          Icons.calendar_month_rounded,
+                          color: AppTheme.primary,
+                        ),
+                        suffixIcon: _selectedDate != null
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () =>
+                                    setState(() => _selectedDate = null),
+                              )
+                            : null,
+                      ),
+                      controller: TextEditingController(
+                        text: Validators.formatDateDisplay(_selectedDate),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+
               const SizedBox(height: 28),
 
-              // ── Subtasks
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -259,8 +411,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-
-              // Subtask input
               Row(
                 children: [
                   Expanded(
@@ -292,7 +442,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   ),
                 ],
               ),
-
               if (_subtasks.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -321,8 +470,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               ],
 
               const SizedBox(height: 40),
-
-              // ── Save button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -336,7 +483,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : Text(_isEditMode ? 'Salvar Alterações' : 'Criar Tarefa'),
+                      : Text(
+                          _isEditMode ? 'Salvar Alterações' : 'Criar Tarefa',
+                        ),
                 ),
               ),
               const SizedBox(height: 20),
