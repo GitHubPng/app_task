@@ -171,7 +171,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           createdAt: widget.task!.createdAt,
           isRecurring: _isRecurring,
           recurringDays: recurringDays,
-          time: _isRecurring ? _selectedTime : null,
+          // Horário disponível para recorrentes e avulsas (ordena a lista do dia).
+          time: _selectedTime,
           archived: widget.task!.archived,
         );
         await _taskService.updateTask(toSave, _subtasks);
@@ -189,7 +190,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           createdAt: now,
           isRecurring: _isRecurring,
           recurringDays: recurringDays,
-          time: _isRecurring ? _selectedTime : null,
+          time: _selectedTime,
         );
         await _taskService.createTask(task, _subtasks);
         if (mounted) {
@@ -337,34 +338,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     );
                   }),
                 ),
-                const SizedBox(height: 20),
-                _label('Horário'),
-                const SizedBox(height: 8),
-                GestureDetector(
-                  onTap: _pickTime,
-                  child: AbsorbPointer(
-                    child: TextFormField(
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        hintText: 'Opcional — ordena a lista do dia',
-                        prefixIcon: const Icon(
-                          Icons.schedule_rounded,
-                          color: AppTheme.primary,
-                        ),
-                        suffixIcon: _selectedTime != null
-                            ? IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () =>
-                                    setState(() => _selectedTime = null),
-                              )
-                            : null,
-                      ),
-                      controller: TextEditingController(
-                        text: _selectedTime ?? '',
-                      ),
-                    ),
-                  ),
-                ),
               ] else ...[
                 _label('Data de Vencimento'),
                 const SizedBox(height: 8),
@@ -394,6 +367,36 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   ),
                 ),
               ],
+
+              // Horário para recorrentes e avulsas — mantém a lista do dia ordenada.
+              const SizedBox(height: 20),
+              _label('Horário'),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: _pickTime,
+                child: AbsorbPointer(
+                  child: TextFormField(
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      hintText: 'Opcional — ordena a lista do dia',
+                      prefixIcon: const Icon(
+                        Icons.schedule_rounded,
+                        color: AppTheme.primary,
+                      ),
+                      suffixIcon: _selectedTime != null
+                          ? IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () =>
+                                  setState(() => _selectedTime = null),
+                            )
+                          : null,
+                    ),
+                    controller: TextEditingController(
+                      text: _selectedTime ?? '',
+                    ),
+                  ),
+                ),
+              ),
 
               const SizedBox(height: 28),
 

@@ -19,6 +19,8 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
+    // Mesmo arquivo entre versões do APK: atualizar o app NÃO apaga este banco.
+    // Só some se o usuário desinstalar o app (ou limpar dados nas configurações).
     final path = join(dbPath, 'apptask.db');
 
     return await openDatabase(
@@ -30,6 +32,7 @@ class DatabaseHelper {
       },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      // Nunca use onDowngrade que apague o banco; versões novas só sobem.
     );
   }
 
@@ -74,28 +77,56 @@ class DatabaseHelper {
     await _seedWeeklyRoutine(db);
   }
 
+  /// Migração incremental: só adiciona o que falta. Nunca DROP / DELETE de dados.
+  /// Seed da rotina roda apenas no onCreate (instalação limpa).
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute(
-        'ALTER TABLE tasks ADD COLUMN is_recurring INTEGER DEFAULT 0',
+      await _addColumnIfMissing(
+        db,
+        'tasks',
+        'is_recurring',
+        'INTEGER DEFAULT 0',
       );
-      await db.execute('ALTER TABLE tasks ADD COLUMN recurring_days TEXT');
-      await db.execute('ALTER TABLE tasks ADD COLUMN time TEXT');
-      await db.execute(
-        'ALTER TABLE tasks ADD COLUMN archived INTEGER DEFAULT 0',
-      );
-      await db.execute('''
-        CREATE TABLE task_completions(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          task_id INTEGER NOT NULL,
-          completion_date TEXT NOT NULL,
-          completed INTEGER DEFAULT 1,
-          FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-          UNIQUE(task_id, completion_date)
-        )
-      ''');
-      // Seed só na criação do zero; upgrade preserva dados do usuário.
+      await _addColumnIfMissing(db, 'tasks', 'recurring_days', 'TEXT');
+      await _addColumnIfMissing(db, 'tasks', 'time', 'TEXT');
+      await _addColumnIfMissing(db, 'tasks', 'archived', 'INTEGER DEFAULT 0');
+
+      if (!await _tableExists(db, 'task_completions')) {
+        await db.execute('''
+          CREATE TABLE task_completions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            completion_date TEXT NOT NULL,
+            completed INTEGER DEFAULT 1,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            UNIQUE(task_id, completion_date)
+          )
+        ''');
+      }
     }
+  }
+
+  Future<bool> _tableExists(Database db, String table) async {
+    final rows = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      [table],
+    );
+    return rows.isNotEmpty;
+  }
+
+  Future<bool> _columnExists(Database db, String table, String column) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    return info.any((row) => row['name'] == column);
+  }
+
+  Future<void> _addColumnIfMissing(
+    Database db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    if (await _columnExists(db, table, column)) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   /// Rotina semanal inicial (editável pelo usuário depois).

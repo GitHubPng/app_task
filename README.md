@@ -92,6 +92,15 @@ CREATE TABLE task_completions(
 
 Recorrentes usam `task_completions` por data (reset diário natural). Avulsas usam `tasks.completed` e arquivam ao concluir.
 
+Horário (`time`) é opcional para **recorrentes e avulsas**, e ordena a lista do dia.
+
+### Atualizar o app sem perder dados
+
+- O SQLite fica em `apptask.db` no armazenamento interno do app.
+- Instalar um APK **mais novo** (mesmo `applicationId`, `versionCode` maior) preserva o banco; a migração `onUpgrade` só adiciona colunas/tabelas.
+- O seed da rotina roda **somente** na primeira instalação (`onCreate`).
+- **Desinstalar** o app ou “Limpar dados” apaga as tarefas — isso é comportamento do Android.
+
 ---
 
 ## Como Rodar
