@@ -4,17 +4,18 @@ import '../models/subtask.dart';
 import '../utils/weekday_utils.dart';
 
 class TaskService {
-  final DatabaseHelper _db = DatabaseHelper.instance;
+  final DatabaseHelper _db;
+
+  TaskService({DatabaseHelper? db}) : _db = db ?? DatabaseHelper.instance;
 
   // ─── TASKS ───────────────────────────────────────────────
 
   Future<List<Task>> getAllTasks({
     String? searchQuery,
-    int? weekday,
+    DateTime? date,
   }) async {
-    final day = weekday ?? DateTime.now().weekday;
-    final dateStr =
-        WeekdayUtils.toDateString(WeekdayUtils.dateForWeekday(day));
+    final selectedDate = date ?? DateTime.now();
+    final dateStr = WeekdayUtils.toDateString(selectedDate);
     return await _db.getTasks(
       searchQuery: searchQuery,
       completionDate: dateStr,
@@ -22,10 +23,35 @@ class TaskService {
   }
 
   /// Lista do dia selecionado (recorrentes + avulsas daquela data).
-  Future<List<Task>> getTasksForWeekday(int weekday) async {
-    final date = WeekdayUtils.dateForWeekday(weekday);
-    final dateStr = WeekdayUtils.toDateString(date);
-    return await _db.getTasksForDay(weekday: weekday, dateStr: dateStr);
+  Future<List<Task>> getTasksForDate(DateTime date) async {
+    final normalized = DateTime(date.year, date.month, date.day);
+    final dateStr = WeekdayUtils.toDateString(normalized);
+    return await _db.getTasksForDate(
+      weekday: normalized.weekday,
+      dateStr: dateStr,
+    );
+  }
+
+  /// Lista de um dia dentro da semana, ou todos os dias se [weekday] for nulo.
+  Future<List<Task>> getTasksForWeek(
+    DateTime weekStart, {
+    int? weekday,
+  }) async {
+    if (weekday != null) {
+      return getTasksForDate(WeekdayUtils.dateInWeek(weekStart, weekday));
+    }
+
+    final all = <Task>[];
+    for (var day = 1; day <= 7; day++) {
+      all.addAll(await getTasksForDate(WeekdayUtils.dateInWeek(weekStart, day)));
+    }
+    return all;
+  }
+
+  /// Compatibilidade interna — preferir [getTasksForDate].
+  Future<List<Task>> getTasksForWeekday(int weekday, {DateTime? weekStart}) {
+    final ref = weekStart ?? WeekdayUtils.weekStart(DateTime.now());
+    return getTasksForDate(WeekdayUtils.dateInWeek(ref, weekday));
   }
 
   Future<List<Task>> getArchivedTasks() async {
@@ -36,7 +62,6 @@ class TaskService {
     return await _db.getTaskById(id);
   }
 
-  /// Returns the new task id
   Future<int> createTask(Task task, List<Subtask> subtasks) async {
     final taskId = await _db.insertTask(task);
     for (final sub in subtasks) {
@@ -45,7 +70,6 @@ class TaskService {
     return taskId;
   }
 
-  /// Full update: replaces task fields + subtask list
   Future<void> updateTask(Task task, List<Subtask> subtasks) async {
     await _db.updateTask(task);
     await _db.deleteSubtasksByTask(task.id!);
@@ -54,36 +78,70 @@ class TaskService {
     }
   }
 
+  /// Override pontual de uma ocorrência recorrente — não altera a regra em tasks.
+  Future<void> updateOccurrence(
+    int taskId,
+    DateTime date, {
+    String? title,
+    String? description,
+    String? time,
+  }) async {
+    final dateStr = WeekdayUtils.toDateString(date);
+    await _db.upsertOccurrence(
+      taskId: taskId,
+      dateStr: dateStr,
+      title: title,
+      description: description,
+      time: time,
+    );
+  }
+
   Future<void> deleteTask(int id) async {
     await _db.deleteTask(id);
   }
 
-  /// Conclusão unificada: avulsa usa tasks.completed (+ arquivo);
-  /// recorrente grava em task_completions na data do dia selecionado.
+  /// Cancela somente a ocorrência recorrente na data informada.
+  Future<void> cancelOccurrence(int taskId, DateTime date) async {
+    final dateStr = WeekdayUtils.toDateString(date);
+    await _db.cancelOccurrence(taskId: taskId, dateStr: dateStr);
+  }
+
+  /// Conclusão unificada por data concreta.
   Future<void> toggleTaskCompleted({
     required Task task,
     required bool completed,
-    required int weekday,
+    required DateTime date,
   }) async {
     if (task.isRecurring) {
-      // RN-NOVA-02 / RN-NOVA-03: não mexe em tasks.completed nem arquiva.
-      final dateStr =
-          WeekdayUtils.toDateString(WeekdayUtils.dateForWeekday(weekday));
+      final dateStr = WeekdayUtils.toDateString(date);
       await _db.setRecurringCompletion(
         taskId: task.id!,
         dateStr: dateStr,
         completed: completed,
       );
     } else {
-      // RN-NOVA-04: avulsa arquiva automaticamente ao concluir.
       await _db.toggleOneOffCompleted(task.id!, completed);
     }
   }
 
   // ─── SUBTASKS ─────────────────────────────────────────────
 
-  Future<void> toggleSubtaskCompleted(int id, bool completed) async {
-    await _db.toggleSubtaskCompleted(id, completed);
+  Future<void> toggleSubtaskCompleted(
+    int subtaskId,
+    DateTime date,
+    bool completed, {
+    required bool isRecurring,
+  }) async {
+    if (isRecurring) {
+      final dateStr = WeekdayUtils.toDateString(date);
+      await _db.setSubtaskCompletionForDate(
+        subtaskId: subtaskId,
+        dateStr: dateStr,
+        completed: completed,
+      );
+    } else {
+      await _db.toggleSubtaskCompleted(subtaskId, completed);
+    }
   }
 
   Future<void> deleteSubtask(int id) async {

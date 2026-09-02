@@ -80,7 +80,7 @@ class TaskTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        task.title,
+                        task.effectiveTitle,
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
@@ -114,11 +114,12 @@ class TaskTile extends StatelessWidget {
               ],
             ),
           ),
-          if (task.description != null && task.description!.isNotEmpty)
+          if (task.effectiveDescription != null &&
+              task.effectiveDescription!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 16, 8),
               child: Text(
-                task.description!,
+                task.effectiveDescription!,
                 style: const TextStyle(
                   fontSize: 13,
                   color: AppTheme.textSecondary,
@@ -183,8 +184,9 @@ class TaskTile extends StatelessWidget {
   Widget _buildMetaRow() {
     final chips = <Widget>[];
 
-    if (task.time != null && task.time!.isNotEmpty) {
-      chips.add(_metaChip(Icons.schedule_rounded, task.time!));
+    final time = task.effectiveTime;
+    if (time != null && time.isNotEmpty) {
+      chips.add(_metaChip(Icons.schedule_rounded, time));
     }
 
     if (task.isRecurring) {
@@ -194,6 +196,9 @@ class TaskTile extends StatelessWidget {
           .join(' · ');
       if (days.isNotEmpty) {
         chips.add(_metaChip(Icons.repeat_rounded, days));
+      }
+      if (task.isOccurrenceOverride) {
+        chips.add(_metaChip(Icons.tune_rounded, 'Alterada'));
       }
     } else if (task.dueDate != null && task.dueDate!.isNotEmpty) {
       chips.add(

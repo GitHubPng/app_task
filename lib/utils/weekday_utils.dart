@@ -30,11 +30,29 @@ class WeekdayUtils {
     return fullLabels[weekday - 1];
   }
 
-  /// Data (só dia) do [weekday] na semana corrente relativa a [reference].
+  /// Segunda-feira (início da semana) da semana que contém [date].
+  static DateTime weekStart(DateTime date) {
+    final day = DateTime(date.year, date.month, date.day);
+    return day.subtract(Duration(days: day.weekday - DateTime.monday));
+  }
+
+  /// Desloca [weekStart] em [weeks] semanas (negativo = anterior).
+  static DateTime addWeeks(DateTime weekStart, int weeks) {
+    final normalized = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    return normalized.add(Duration(days: weeks * 7));
+  }
+
+  /// Data do [weekday] (1=Seg ... 7=Dom) dentro da semana que começa em [weekStart].
+  static DateTime dateInWeek(DateTime weekStart, int weekday) {
+    final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    return start.add(Duration(days: weekday - DateTime.monday));
+  }
+
+  /// Data (só dia) do [weekday] na semana de [reference].
+  /// Preferir [dateInWeek] quando [reference] já for o weekStart.
   static DateTime dateForWeekday(int weekday, {DateTime? reference}) {
-    final now = reference ?? DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return today.add(Duration(days: weekday - today.weekday));
+    final ref = reference ?? DateTime.now();
+    return dateInWeek(weekStart(ref), weekday);
   }
 
   /// Formata DateTime como YYYY-MM-DD.
@@ -42,6 +60,22 @@ class WeekdayUtils {
     return '${date.year}-'
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  /// Formata intervalo da semana: "31/08 - 06/09".
+  static String formatWeekRange(DateTime weekStart) {
+    final end = weekStart.add(const Duration(days: 6));
+    return '${_dayMonth(weekStart)} - ${_dayMonth(end)}';
+  }
+
+  static String _dayMonth(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}';
+  }
+
+  /// Número do dia para exibição no seletor (ex.: "31").
+  static String dayNumber(DateTime date) {
+    return date.day.toString().padLeft(2, '0');
   }
 
   /// Data de hoje em YYYY-MM-DD.

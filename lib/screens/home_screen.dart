@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/task_tile.dart';
@@ -23,13 +24,21 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String _searchQuery = '';
 
-  /// Dia selecionado (1=Seg ... 7=Dom). Inicia no dia atual.
+  /// Segunda-feira da semana selecionada.
+  late DateTime _selectedWeekStart;
+
+  /// Dia selecionado dentro da semana (1=Seg ... 7=Dom).
   late int _selectedWeekday;
+
+  DateTime get _selectedDate =>
+      WeekdayUtils.dateInWeek(_selectedWeekStart, _selectedWeekday);
 
   @override
   void initState() {
     super.initState();
-    _selectedWeekday = DateTime.now().weekday;
+    final now = DateTime.now();
+    _selectedWeekStart = WeekdayUtils.weekStart(now);
+    _selectedWeekday = now.weekday;
     _loadTasks();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
@@ -48,13 +57,12 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoading = true);
 
     final q = query?.isNotEmpty == true ? query : null;
-    // Busca: todas as tarefas ativas. Sem busca: visão do dia selecionado.
     final tasks = q != null
         ? await _taskService.getAllTasks(
             searchQuery: q,
-            weekday: _selectedWeekday,
+            date: _selectedDate,
           )
-        : await _taskService.getTasksForWeekday(_selectedWeekday);
+        : await _taskService.getTasksForDate(_selectedDate);
 
     if (!mounted) return;
     setState(() {
@@ -63,10 +71,29 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _goToToday() {
+    final now = DateTime.now();
+    setState(() {
+      _selectedWeekStart = WeekdayUtils.weekStart(now);
+      _selectedWeekday = now.weekday;
+    });
+    _loadTasks(query: _searchQuery);
+  }
+
+  void _changeWeek(int delta) {
+    setState(() {
+      _selectedWeekStart = WeekdayUtils.addWeeks(_selectedWeekStart, delta);
+    });
+    _loadTasks(query: _searchQuery);
+  }
+
   Future<void> _openForm({Task? task}) async {
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => TaskFormScreen(task: task),
+        builder: (_) => TaskFormScreen(
+          task: task,
+          occurrenceDate: task?.isRecurring == true ? task?.occurrenceDate : null,
+        ),
         fullscreenDialog: true,
       ),
     );
@@ -80,16 +107,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _confirmDelete(Task task) async {
+    final isOccurrenceCancel = task.isRecurring && task.occurrenceDate != null;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Excluir tarefa?',
-          style: TextStyle(fontWeight: FontWeight.w700),
+        title: Text(
+          isOccurrenceCancel ? 'Excluir esta ocorrência?' : 'Excluir tarefa?',
+          style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         content: Text(
-          'A tarefa "${task.title}" será removida permanentemente. Esta ação não pode ser desfeita.',
+          isOccurrenceCancel
+              ? 'A ocorrência "${task.effectiveTitle}" em ${Validators.formatDateDisplay(task.occurrenceDate)} será removida desta data. A rotina continuará nos outros dias.'
+              : 'A tarefa "${task.title}" será removida permanentemente. Esta ação não pode ser desfeita.',
           style: const TextStyle(color: AppTheme.textSecondary),
         ),
         actions: [
@@ -100,9 +131,9 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton(
             style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text(
-              'Excluir',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            child: Text(
+              isOccurrenceCancel ? 'Excluir ocorrência' : 'Excluir',
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           ),
         ],
@@ -110,16 +141,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirmed == true) {
-      await _taskService.deleteTask(task.id!);
+      if (isOccurrenceCancel) {
+        await _taskService.cancelOccurrence(task.id!, _selectedDate);
+      } else {
+        await _taskService.deleteTask(task.id!);
+      }
       _loadTasks(query: _searchQuery);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Tarefa excluída.'),
+            content: Text(
+              isOccurrenceCancel
+                  ? 'Ocorrência excluída.'
+                  : 'Tarefa excluída.',
+            ),
             backgroundColor: AppTheme.danger,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
             margin: const EdgeInsets.all(16),
           ),
         );
@@ -131,14 +171,19 @@ class _HomeScreenState extends State<HomeScreen> {
     await _taskService.toggleTaskCompleted(
       task: task,
       completed: completed,
-      weekday: _selectedWeekday,
+      date: _selectedDate,
     );
     _loadTasks(query: _searchQuery);
   }
 
   Future<void> _toggleSubtask(Task task, int subtaskIndex) async {
     final sub = task.subtasks[subtaskIndex];
-    await _taskService.toggleSubtaskCompleted(sub.id!, !sub.completed);
+    await _taskService.toggleSubtaskCompleted(
+      sub.id!,
+      _selectedDate,
+      !sub.completed,
+      isRecurring: task.isRecurring,
+    );
     _loadTasks(query: _searchQuery);
   }
 
@@ -180,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
         bottom: PreferredSize(
-          preferredSize: Size.fromHeight(isSearching ? 64 : 120),
+          preferredSize: Size.fromHeight(isSearching ? 64 : 168),
           child: Column(
             children: [
               Padding(
@@ -226,8 +271,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              // Seletor de dia — oculto durante busca (busca é global).
-              if (!isSearching) _buildWeekdaySelector(),
+              if (!isSearching) ...[
+                _buildWeekNavigation(),
+                _buildWeekdaySelector(),
+              ],
             ],
           ),
         ),
@@ -277,16 +324,57 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildWeekNavigation() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            tooltip: 'Semana anterior',
+            onPressed: () => _changeWeek(-1),
+          ),
+          Expanded(
+            child: Text(
+              WeekdayUtils.formatWeekRange(_selectedWeekStart),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            tooltip: 'Próxima semana',
+            onPressed: () => _changeWeek(1),
+          ),
+          TextButton(
+            onPressed: _goToToday,
+            child: const Text(
+              'Hoje',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildWeekdaySelector() {
-    final today = DateTime.now().weekday;
+    final today = DateTime.now();
+    final todayStr = WeekdayUtils.toDateString(today);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Row(
         children: List.generate(7, (i) {
-          final day = i + 1;
-          final selected = _selectedWeekday == day;
-          final isToday = day == today;
+          final weekday = i + 1;
+          final date = WeekdayUtils.dateInWeek(_selectedWeekStart, weekday);
+          final dateStr = WeekdayUtils.toDateString(date);
+          final selected = _selectedWeekday == weekday;
+          final isToday = dateStr == todayStr;
 
           return Expanded(
             child: Padding(
@@ -301,24 +389,43 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: () {
-                    setState(() => _selectedWeekday = day);
-                    _loadTasks();
+                    setState(() => _selectedWeekday = weekday);
+                    _loadTasks(query: _searchQuery);
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     alignment: Alignment.center,
-                    child: Text(
-                      WeekdayUtils.shortLabels[i],
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight:
-                            selected || isToday ? FontWeight.w700 : FontWeight.w500,
-                        color: selected
-                            ? Colors.white
-                            : isToday
-                                ? AppTheme.primary
-                                : AppTheme.textSecondary,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          WeekdayUtils.shortLabels[i],
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: selected || isToday
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: selected
+                                ? Colors.white
+                                : isToday
+                                    ? AppTheme.primary
+                                    : AppTheme.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          WeekdayUtils.dayNumber(date),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: selected
+                                ? Colors.white
+                                : isToday
+                                    ? AppTheme.primary
+                                    : AppTheme.textPrimary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

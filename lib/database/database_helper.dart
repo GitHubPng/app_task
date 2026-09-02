@@ -1,15 +1,27 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
 import '../models/task_completion.dart';
+import '../models/task_occurrence.dart';
+import '../models/subtask_completion.dart';
 import '../utils/weekday_utils.dart';
 
 class DatabaseHelper {
-  static final DatabaseHelper instance = DatabaseHelper._internal();
-  static Database? _database;
+  static DatabaseHelper instance = DatabaseHelper._internal();
+
+  Database? _database;
+  String? _testDbPath;
+  bool _skipSeed = false;
 
   DatabaseHelper._internal();
+
+  /// Banco em memória/arquivo isolado para testes (sem seed da rotina).
+  @visibleForTesting
+  DatabaseHelper.test(String dbPath, {bool skipSeed = true})
+      : _testDbPath = dbPath,
+        _skipSeed = skipSeed;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -18,25 +30,28 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    // Mesmo arquivo entre versões do APK: atualizar o app NÃO apaga este banco.
-    // Só some se o usuário desinstalar o app (ou limpar dados nas configurações).
-    final path = join(dbPath, 'apptask.db');
+    final path = _testDbPath ?? join(await getDatabasesPath(), 'apptask.db');
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
-        // Necessário para ON DELETE CASCADE em subtarefas e completions.
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      // Nunca use onDowngrade que apague o banco; versões novas só sobem.
     );
   }
 
   Future<void> _onCreate(Database db, int version) async {
+    await _createCoreTables(db);
+    await _createOccurrenceTables(db);
+    if (!_skipSeed) {
+      await _seedWeeklyRoutine(db);
+    }
+  }
+
+  Future<void> _createCoreTables(Database db) async {
     await db.execute('''
       CREATE TABLE tasks(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +77,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // Histórico de conclusão por dia — reset diário das recorrentes.
     await db.execute('''
       CREATE TABLE task_completions(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,12 +87,48 @@ class DatabaseHelper {
         UNIQUE(task_id, completion_date)
       )
     ''');
-
-    await _seedWeeklyRoutine(db);
   }
 
-  /// Migração incremental: só adiciona o que falta. Nunca DROP / DELETE de dados.
-  /// Seed da rotina roda apenas no onCreate (instalação limpa).
+  Future<void> _createOccurrenceTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE task_occurrences(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        occurrence_date TEXT NOT NULL,
+        title TEXT,
+        description TEXT,
+        time TEXT,
+        cancelled INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        UNIQUE(task_id, occurrence_date)
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE subtask_completions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subtask_id INTEGER NOT NULL,
+        occurrence_date TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(subtask_id) REFERENCES subtasks(id) ON DELETE CASCADE,
+        UNIQUE(subtask_id, occurrence_date)
+      )
+    ''');
+  }
+
+  /// Expõe migração para testes de upgrade v2 → v3.
+  @visibleForTesting
+  Future<void> runUpgrade(Database db, int oldVersion, int newVersion) =>
+      _onUpgrade(db, oldVersion, newVersion);
+
+  @visibleForTesting
+  Future<void> closeForTest() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+  }
+
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _addColumnIfMissing(
@@ -103,6 +153,46 @@ class DatabaseHelper {
           )
         ''');
       }
+    }
+
+    if (oldVersion < 3) {
+      if (!await _tableExists(db, 'task_occurrences')) {
+        await db.execute('''
+          CREATE TABLE task_occurrences(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            occurrence_date TEXT NOT NULL,
+            title TEXT,
+            description TEXT,
+            time TEXT,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            UNIQUE(task_id, occurrence_date)
+          )
+        ''');
+      }
+
+      if (!await _tableExists(db, 'subtask_completions')) {
+        await db.execute('''
+          CREATE TABLE subtask_completions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subtask_id INTEGER NOT NULL,
+            occurrence_date TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(subtask_id) REFERENCES subtasks(id) ON DELETE CASCADE,
+            UNIQUE(subtask_id, occurrence_date)
+          )
+        ''');
+      }
+
+      // Subtarefas de rotinas: completed era global — reset sem inventar data.
+      await db.execute('''
+        UPDATE subtasks
+        SET completed = 0
+        WHERE task_id IN (
+          SELECT id FROM tasks WHERE is_recurring = 1
+        )
+      ''');
     }
   }
 
@@ -129,7 +219,6 @@ class DatabaseHelper {
     await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
-  /// Rotina semanal inicial (editável pelo usuário depois).
   Future<void> _seedWeeklyRoutine(Database db) async {
     final now = DateTime.now().toIso8601String();
 
@@ -176,8 +265,6 @@ class DatabaseHelper {
     return await db.insert('tasks', task.toMap()..remove('id'));
   }
 
-  /// Lista tarefas ativas (não arquivadas). Busca ignora filtro de dia.
-  /// [completionDate] aplica o status "feito neste dia" nas recorrentes.
   Future<List<Task>> getTasks({
     String? searchQuery,
     String? completionDate,
@@ -201,23 +288,17 @@ class DatabaseHelper {
       );
     }
 
-    final tasks = await _hydrateTasks(maps);
     final date = completionDate ?? WeekdayUtils.todayString();
-    await _applyCompletionsForDate(tasks, date);
-    return tasks;
+    return _hydrateTasksForDate(maps, date, isRecurring: null);
   }
 
-  /// Tarefas do dia: recorrentes daquele weekday + avulsas com dueDate na data.
-  ///
-  /// [weekday] 1–7; [dateStr] YYYY-MM-DD daquele dia na semana corrente.
-  /// Ordenação cronológica por time (sem horário no fim).
-  Future<List<Task>> getTasksForDay({
+  /// Tarefas de uma data concreta: recorrentes (virtuais + overrides) + avulsas.
+  Future<List<Task>> getTasksForDate({
     required int weekday,
     required String dateStr,
   }) async {
     final db = await database;
 
-    // Recorrentes: recurring_days contém o weekday (ex.: %,3,% ou 3,% ou %,3 ou 3).
     final recurringMaps = await db.query(
       'tasks',
       where: '''
@@ -236,23 +317,16 @@ class DatabaseHelper {
       ],
     );
 
-    // Avulsas com data naquele dia; sem data aparecem só no "hoje".
-    final isToday = dateStr == WeekdayUtils.todayString();
     final oneOffMaps = await db.query(
       'tasks',
-      where: isToday
-          ? 'archived = 0 AND is_recurring = 0 AND (due_date = ? OR due_date IS NULL)'
-          : 'archived = 0 AND is_recurring = 0 AND due_date = ?',
+      where: 'archived = 0 AND is_recurring = 0 AND due_date = ?',
       whereArgs: [dateStr],
     );
 
     final maps = [...recurringMaps, ...oneOffMaps];
-    final tasks = await _hydrateTasks(maps);
+    final tasks = await _hydrateTasksForDate(maps, dateStr);
 
-    // Marca completed das recorrentes conforme task_completions daquela data.
-    await _applyCompletionsForDate(tasks, dateStr);
-
-    tasks.sort(_compareByTimeThenCreated);
+    tasks.sort(_compareByEffectiveTimeThenCreated);
     return tasks;
   }
 
@@ -263,7 +337,7 @@ class DatabaseHelper {
       where: 'archived = 1',
       orderBy: 'created_at DESC',
     );
-    return _hydrateTasks(maps);
+    return _hydrateTasksForDate(maps, WeekdayUtils.todayString());
   }
 
   Future<Task?> getTaskById(int id) async {
@@ -288,29 +362,102 @@ class DatabaseHelper {
 
   Future<int> deleteTask(int id) async {
     final db = await database;
-    // CASCADE remove subtarefas e task_completions (RN-NOVA-06).
     return await db.delete('tasks', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Conclusão de tarefa avulsa: atualiza completed e arquiva ao concluir (RN-NOVA-04).
+  /// Conclusão de tarefa avulsa: atualiza completed sem arquivar automaticamente.
   Future<int> toggleOneOffCompleted(int id, bool completed) async {
     final db = await database;
     return await db.update(
       'tasks',
-      {
-        'completed': completed ? 1 : 0,
-        // Só arquiva ao marcar concluída; se desmarcar (ainda na lista), desarquiva.
-        'archived': completed ? 1 : 0,
-      },
+      {'completed': completed ? 1 : 0},
       where: 'id = ?',
       whereArgs: [id],
     );
   }
 
+  // ─── TASK OCCURRENCES ─────────────────────────────────────
+
+  Future<TaskOccurrence?> getOccurrence(int taskId, String dateStr) async {
+    final db = await database;
+    final maps = await db.query(
+      'task_occurrences',
+      where: 'task_id = ? AND occurrence_date = ?',
+      whereArgs: [taskId, dateStr],
+      limit: 1,
+    );
+    if (maps.isEmpty) return null;
+    return TaskOccurrence.fromMap(maps.first);
+  }
+
+  /// UPSERT de override pontual — não altera tasks.
+  Future<void> upsertOccurrence({
+    required int taskId,
+    required String dateStr,
+    String? title,
+    String? description,
+    String? time,
+  }) async {
+    final db = await database;
+    final existing = await getOccurrence(taskId, dateStr);
+
+    if (existing != null) {
+      await db.update(
+        'task_occurrences',
+        {
+          'title': title,
+          'description': description,
+          'time': time,
+          'cancelled': 0,
+        },
+        where: 'id = ?',
+        whereArgs: [existing.id],
+      );
+    } else {
+      await db.insert(
+        'task_occurrences',
+        TaskOccurrence(
+          taskId: taskId,
+          occurrenceDate: dateStr,
+          title: title,
+          description: description,
+          time: time,
+        ).toMap()
+          ..remove('id'),
+      );
+    }
+  }
+
+  /// Cancela somente a ocorrência na data (regra permanece em tasks).
+  Future<void> cancelOccurrence({
+    required int taskId,
+    required String dateStr,
+  }) async {
+    final db = await database;
+    final existing = await getOccurrence(taskId, dateStr);
+
+    if (existing != null) {
+      await db.update(
+        'task_occurrences',
+        {'cancelled': 1},
+        where: 'id = ?',
+        whereArgs: [existing.id],
+      );
+    } else {
+      await db.insert(
+        'task_occurrences',
+        TaskOccurrence(
+          taskId: taskId,
+          occurrenceDate: dateStr,
+          cancelled: true,
+        ).toMap()
+          ..remove('id'),
+      );
+    }
+  }
+
   // ─── TASK COMPLETIONS (recorrentes) ───────────────────────
 
-  /// Marca/desmarca conclusão da recorrente na data (RN-NOVA-02).
-  /// Não altera o campo completed da tabela tasks.
   Future<void> setRecurringCompletion({
     required int taskId,
     required String dateStr,
@@ -386,6 +533,44 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> setSubtaskCompletionForDate({
+    required int subtaskId,
+    required String dateStr,
+    required bool completed,
+  }) async {
+    final db = await database;
+
+    if (completed) {
+      await db.insert(
+        'subtask_completions',
+        SubtaskCompletion(
+          subtaskId: subtaskId,
+          occurrenceDate: dateStr,
+          completed: true,
+        ).toMap()
+          ..remove('id'),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await db.delete(
+        'subtask_completions',
+        where: 'subtask_id = ? AND occurrence_date = ?',
+        whereArgs: [subtaskId, dateStr],
+      );
+    }
+  }
+
+  Future<bool> isSubtaskCompletedOn(int subtaskId, String dateStr) async {
+    final db = await database;
+    final maps = await db.query(
+      'subtask_completions',
+      where: 'subtask_id = ? AND occurrence_date = ? AND completed = 1',
+      whereArgs: [subtaskId, dateStr],
+      limit: 1,
+    );
+    return maps.isNotEmpty;
+  }
+
   Future<int> deleteSubtask(int id) async {
     final db = await database;
     return await db.delete('subtasks', where: 'id = ?', whereArgs: [id]);
@@ -398,40 +583,64 @@ class DatabaseHelper {
 
   // ─── helpers internos ─────────────────────────────────────
 
-  Future<List<Task>> _hydrateTasks(List<Map<String, dynamic>> maps) async {
+  Future<List<Task>> _hydrateTasksForDate(
+    List<Map<String, dynamic>> maps,
+    String dateStr, {
+    bool? isRecurring,
+  }) async {
     final tasks = <Task>[];
     for (final map in maps) {
       final task = Task.fromMap(map);
-      task.subtasks = await getSubtasks(task.id!);
+      task.occurrenceDate = dateStr;
+
+      if (task.isRecurring) {
+        final occurrence = await getOccurrence(task.id!, dateStr);
+        if (occurrence != null) {
+          if (occurrence.cancelled) continue;
+
+          task.occurrenceId = occurrence.id;
+          if (occurrence.title != null) {
+            task.occurrenceTitleOverride = occurrence.title;
+          }
+          if (occurrence.description != null) {
+            task.occurrenceDescriptionOverride = occurrence.description;
+          }
+          if (occurrence.time != null) {
+            task.occurrenceTimeOverride = occurrence.time;
+          }
+          task.isOccurrenceOverride = occurrence.title != null ||
+              occurrence.description != null ||
+              occurrence.time != null;
+        }
+
+        task.completed = await isRecurringCompletedOn(task.id!, dateStr);
+        task.subtasks = await getSubtasks(task.id!);
+        for (final sub in task.subtasks) {
+          sub.completed = await isSubtaskCompletedOn(sub.id!, dateStr);
+        }
+      } else {
+        task.subtasks = await getSubtasks(task.id!);
+      }
+
+      if (isRecurring != null && task.isRecurring != isRecurring) continue;
       tasks.add(task);
     }
     return tasks;
   }
 
-  /// Aplica completed "virtual" nas recorrentes a partir de task_completions.
-  Future<void> _applyCompletionsForDate(
-    List<Task> tasks,
-    String dateStr,
-  ) async {
-    for (final task in tasks) {
-      if (task.isRecurring && task.id != null) {
-        task.completed = await isRecurringCompletedOn(task.id!, dateStr);
-      }
-    }
-  }
-
-  int _compareByTimeThenCreated(Task a, Task b) {
-    final aHas = a.time != null && a.time!.isNotEmpty;
-    final bHas = b.time != null && b.time!.isNotEmpty;
+  int _compareByEffectiveTimeThenCreated(Task a, Task b) {
+    final aTime = a.effectiveTime;
+    final bTime = b.effectiveTime;
+    final aHas = aTime != null && aTime.isNotEmpty;
+    final bHas = bTime != null && bTime.isNotEmpty;
     if (aHas && bHas) {
-      final cmp = a.time!.compareTo(b.time!);
+      final cmp = aTime.compareTo(bTime);
       if (cmp != 0) return cmp;
     } else if (aHas && !bHas) {
       return -1;
     } else if (!aHas && bHas) {
       return 1;
     }
-    // Pendentes primeiro, depois mais recentes.
     if (a.completed != b.completed) {
       return a.completed ? 1 : -1;
     }

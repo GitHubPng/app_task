@@ -10,7 +10,10 @@ import '../widgets/subtask_widget.dart';
 class TaskFormScreen extends StatefulWidget {
   final Task? task; // null = create mode, non-null = edit mode
 
-  const TaskFormScreen({super.key, this.task});
+  /// Quando definido, edição afeta somente esta ocorrência da rotina.
+  final String? occurrenceDate;
+
+  const TaskFormScreen({super.key, this.task, this.occurrenceDate});
 
   @override
   State<TaskFormScreen> createState() => _TaskFormScreenState();
@@ -34,16 +37,25 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   bool get _isEditMode => widget.task != null;
 
+  /// Edição pontual de uma ocorrência recorrente (não altera a regra).
+  bool get _isOccurrenceEdit =>
+      _isEditMode &&
+      widget.task!.isRecurring &&
+      widget.occurrenceDate != null;
+
   @override
   void initState() {
     super.initState();
     if (_isEditMode) {
       final t = widget.task!;
-      _titleController.text = t.title;
-      _descriptionController.text = t.description ?? '';
+      _titleController.text =
+          _isOccurrenceEdit ? t.effectiveTitle : t.title;
+      _descriptionController.text =
+          (_isOccurrenceEdit ? t.effectiveDescription : t.description) ?? '';
       _isRecurring = t.isRecurring;
       _selectedDate = t.dueDate;
-      _selectedTime = t.time;
+      _selectedTime =
+          _isOccurrenceEdit ? t.effectiveTime : t.time;
       _selectedDays.addAll(t.recurringDaysList);
       _subtasks = List.from(t.subtasks);
     } else {
@@ -138,8 +150,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // RN-NOVA-01: recorrente precisa de pelo menos um dia.
-    if (_isRecurring && _selectedDays.isEmpty) {
+    // RN-NOVA-01: recorrente precisa de pelo menos um dia (exceto edição de ocorrência).
+    if (_isRecurring && !_isOccurrenceEdit && _selectedDays.isEmpty) {
       _showSnack('Selecione ao menos um dia da semana.', isError: true);
       return;
     }
@@ -160,25 +172,41 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           _isRecurring ? WeekdayUtils.daysToStorage(_selectedDays.toList()) : null;
 
       if (_isEditMode) {
-        final toSave = Task(
-          id: widget.task!.id,
-          title: _titleController.text.trim(),
-          description: _descriptionController.text.trim().isEmpty
-              ? null
-              : _descriptionController.text.trim(),
-          dueDate: _isRecurring ? null : _selectedDate,
-          completed: widget.task!.completed,
-          createdAt: widget.task!.createdAt,
-          isRecurring: _isRecurring,
-          recurringDays: recurringDays,
-          // Horário disponível para recorrentes e avulsas (ordena a lista do dia).
-          time: _selectedTime,
-          archived: widget.task!.archived,
-        );
-        await _taskService.updateTask(toSave, _subtasks);
-        if (mounted) {
-          _showSnack('Tarefa atualizada!');
-          Navigator.of(context).pop(true);
+        if (_isOccurrenceEdit) {
+          final date = DateTime.parse(widget.occurrenceDate!);
+          await _taskService.updateOccurrence(
+            widget.task!.id!,
+            date,
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim().isEmpty
+                ? null
+                : _descriptionController.text.trim(),
+            time: _selectedTime,
+          );
+          if (mounted) {
+            _showSnack('Ocorrência atualizada!');
+            Navigator.of(context).pop(true);
+          }
+        } else {
+          final toSave = Task(
+            id: widget.task!.id,
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim().isEmpty
+                ? null
+                : _descriptionController.text.trim(),
+            dueDate: _isRecurring ? null : _selectedDate,
+            completed: widget.task!.completed,
+            createdAt: widget.task!.createdAt,
+            isRecurring: _isRecurring,
+            recurringDays: recurringDays,
+            time: _selectedTime,
+            archived: widget.task!.archived,
+          );
+          await _taskService.updateTask(toSave, _subtasks);
+          if (mounted) {
+            _showSnack('Tarefa atualizada!');
+            Navigator.of(context).pop(true);
+          }
         }
       } else {
         final task = Task(
@@ -224,7 +252,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
-        title: Text(_isEditMode ? 'Editar Tarefa' : 'Nova Tarefa'),
+        title: Text(
+          _isOccurrenceEdit
+              ? 'Editar Ocorrência'
+              : (_isEditMode ? 'Editar Tarefa' : 'Nova Tarefa'),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.of(context).pop(false),
@@ -279,30 +311,56 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Tipo de tarefa
-              _label('Tipo de tarefa'),
-              const SizedBox(height: 8),
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment<bool>(
-                    value: true,
-                    label: Text('Recorrente'),
-                    icon: Icon(Icons.repeat_rounded, size: 18),
+              if (_isOccurrenceEdit) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppTheme.primary.withOpacity(0.2),
+                    ),
                   ),
-                  ButtonSegment<bool>(
-                    value: false,
-                    label: Text('Avulsa'),
-                    icon: Icon(Icons.event_rounded, size: 18),
+                  child: Text(
+                    'Alterações nesta tela afetam somente a ocorrência de '
+                    '${Validators.formatDateDisplay(widget.occurrenceDate)}.',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppTheme.textSecondary,
+                      height: 1.4,
+                    ),
                   ),
-                ],
-                selected: {_isRecurring},
-                onSelectionChanged: (set) {
-                  setState(() => _isRecurring = set.first);
-                },
-              ),
-              const SizedBox(height: 20),
+                ),
+                const SizedBox(height: 20),
+              ],
 
-              if (_isRecurring) ...[
+              // Tipo de tarefa — bloqueado em edição de ocorrência.
+              if (!_isOccurrenceEdit) ...[
+                _label('Tipo de tarefa'),
+                const SizedBox(height: 8),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment<bool>(
+                      value: true,
+                      label: Text('Recorrente'),
+                      icon: Icon(Icons.repeat_rounded, size: 18),
+                    ),
+                    ButtonSegment<bool>(
+                      value: false,
+                      label: Text('Avulsa'),
+                      icon: Icon(Icons.event_rounded, size: 18),
+                    ),
+                  ],
+                  selected: {_isRecurring},
+                  onSelectionChanged: (set) {
+                    setState(() => _isRecurring = set.first);
+                  },
+                ),
+                const SizedBox(height: 20),
+              ],
+
+              if (_isRecurring && !_isOccurrenceEdit) ...[
                 _label('Dias da semana *'),
                 const SizedBox(height: 8),
                 Wrap(
@@ -338,7 +396,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     );
                   }),
                 ),
-              ] else ...[
+              ] else if (!_isOccurrenceEdit) ...[
                 _label('Data de Vencimento'),
                 const SizedBox(height: 8),
                 GestureDetector(
@@ -398,78 +456,79 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ),
               ),
 
-              const SizedBox(height: 28),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _label('Etapas (Subtarefas)'),
-                  Text(
-                    '${_subtasks.length} ${_subtasks.length == 1 ? 'etapa' : 'etapas'}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _subtaskController,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        hintText: 'Nova etapa...',
-                        prefixIcon: Icon(
-                          Icons.add_task_rounded,
-                          color: AppTheme.primary,
-                        ),
-                      ),
-                      onFieldSubmitted: (_) => _addSubtask(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Material(
-                    color: AppTheme.primary,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: _addSubtask,
-                      child: const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Icon(Icons.add, color: Colors.white, size: 22),
+              if (!_isOccurrenceEdit) ...[
+                const SizedBox(height: 28),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _label('Etapas (Subtarefas)'),
+                    Text(
+                      '${_subtasks.length} ${_subtasks.length == 1 ? 'etapa' : 'etapas'}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              if (_subtasks.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.border),
-                  ),
-                  child: Column(
-                    children: _subtasks.asMap().entries.map((entry) {
-                      final i = entry.key;
-                      final sub = entry.value;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        child: SubtaskWidget(
-                          subtask: sub,
-                          onDelete: () => _removeSubtask(i),
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                  ],
                 ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _subtaskController,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          hintText: 'Nova etapa...',
+                          prefixIcon: Icon(
+                            Icons.add_task_rounded,
+                            color: AppTheme.primary,
+                          ),
+                        ),
+                        onFieldSubmitted: (_) => _addSubtask(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Material(
+                      color: AppTheme.primary,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: _addSubtask,
+                        child: const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Icon(Icons.add, color: Colors.white, size: 22),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_subtasks.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppTheme.border),
+                    ),
+                    child: Column(
+                      children: _subtasks.asMap().entries.map((entry) {
+                        final i = entry.key;
+                        final sub = entry.value;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          child: SubtaskWidget(
+                            subtask: sub,
+                            onDelete: () => _removeSubtask(i),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
               ],
 
               const SizedBox(height: 40),

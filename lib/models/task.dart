@@ -18,8 +18,24 @@ class Task {
   /// Horário "HH:mm" para ordenar a lista do dia.
   String? time;
 
-  /// Avulsas arquivam ao concluir; recorrentes nunca arquivam sozinhas.
+  /// Arquivamento manual; não é mais setado automaticamente ao concluir avulsas.
   bool archived;
+
+  // ─── Campos runtime (agenda / ocorrência) ─────────────────
+
+  /// Data concreta exibida na agenda (YYYY-MM-DD).
+  String? occurrenceDate;
+
+  /// Id em task_occurrences, quando materializada.
+  int? occurrenceId;
+
+  /// true quando há linha em task_occurrences para esta data.
+  bool isOccurrenceOverride;
+
+  /// Overrides pontuais vindos de task_occurrences (não persistidos em tasks).
+  String? occurrenceTitleOverride;
+  String? occurrenceDescriptionOverride;
+  String? occurrenceTimeOverride;
 
   Task({
     this.id,
@@ -33,7 +49,23 @@ class Task {
     this.recurringDays,
     this.time,
     this.archived = false,
+    this.occurrenceDate,
+    this.occurrenceId,
+    this.isOccurrenceOverride = false,
+    this.occurrenceTitleOverride,
+    this.occurrenceDescriptionOverride,
+    this.occurrenceTimeOverride,
   });
+
+  /// Título efetivo: override da ocorrência → valor da regra.
+  String get effectiveTitle => occurrenceTitleOverride ?? title;
+
+  /// Descrição efetiva: override da ocorrência → valor da regra.
+  String? get effectiveDescription =>
+      occurrenceDescriptionOverride ?? description;
+
+  /// Horário efetivo: override da ocorrência → valor da regra.
+  String? get effectiveTime => occurrenceTimeOverride ?? time;
 
   /// Converte "1,3,5" em lista de inteiros [1, 3, 5].
   List<int> get recurringDaysList {
@@ -93,9 +125,16 @@ class Task {
     String? recurringDays,
     String? time,
     bool? archived,
+    String? occurrenceDate,
+    int? occurrenceId,
+    bool? isOccurrenceOverride,
+    String? occurrenceTitleOverride,
+    String? occurrenceDescriptionOverride,
+    String? occurrenceTimeOverride,
     bool clearDueDate = false,
     bool clearRecurringDays = false,
     bool clearTime = false,
+    bool clearOccurrenceOverrides = false,
   }) {
     return Task(
       id: id ?? this.id,
@@ -110,6 +149,19 @@ class Task {
           clearRecurringDays ? null : (recurringDays ?? this.recurringDays),
       time: clearTime ? null : (time ?? this.time),
       archived: archived ?? this.archived,
+      occurrenceDate: occurrenceDate ?? this.occurrenceDate,
+      occurrenceId: occurrenceId ?? this.occurrenceId,
+      isOccurrenceOverride: isOccurrenceOverride ?? this.isOccurrenceOverride,
+      occurrenceTitleOverride: clearOccurrenceOverrides
+          ? null
+          : (occurrenceTitleOverride ?? this.occurrenceTitleOverride),
+      occurrenceDescriptionOverride: clearOccurrenceOverrides
+          ? null
+          : (occurrenceDescriptionOverride ??
+              this.occurrenceDescriptionOverride),
+      occurrenceTimeOverride: clearOccurrenceOverrides
+          ? null
+          : (occurrenceTimeOverride ?? this.occurrenceTimeOverride),
     );
   }
 }
