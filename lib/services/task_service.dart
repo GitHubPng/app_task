@@ -22,7 +22,6 @@ class TaskService {
     );
   }
 
-  /// Lista do dia selecionado (recorrentes + avulsas daquela data).
   Future<List<Task>> getTasksForDate(DateTime date) async {
     final normalized = DateTime(date.year, date.month, date.day);
     final dateStr = WeekdayUtils.toDateString(normalized);
@@ -32,7 +31,6 @@ class TaskService {
     );
   }
 
-  /// Lista de um dia dentro da semana, ou todos os dias se [weekday] for nulo.
   Future<List<Task>> getTasksForWeek(
     DateTime weekStart, {
     int? weekday,
@@ -48,7 +46,6 @@ class TaskService {
     return all;
   }
 
-  /// Compatibilidade interna — preferir [getTasksForDate].
   Future<List<Task>> getTasksForWeekday(int weekday, {DateTime? weekStart}) {
     final ref = weekStart ?? WeekdayUtils.weekStart(DateTime.now());
     return getTasksForDate(WeekdayUtils.dateInWeek(ref, weekday));
@@ -64,6 +61,19 @@ class TaskService {
 
   Future<int> createTask(Task task, List<Subtask> subtasks) async {
     final taskId = await _db.insertTask(task);
+
+    if (task.isRecurring && task.recurringDays != null) {
+      final effectiveFrom = _effectiveFromString(task.createdAt);
+      await _db.upsertRecurrenceRule(
+        taskId: taskId,
+        effectiveFrom: effectiveFrom,
+        recurringDays: task.recurringDays!,
+        title: task.title,
+        description: task.description,
+        time: task.time,
+      );
+    }
+
     for (final sub in subtasks) {
       await _db.insertSubtask(sub.copyWith(taskId: taskId));
     }
@@ -78,7 +88,106 @@ class TaskService {
     }
   }
 
-  /// Override pontual de uma ocorrência recorrente — não altera a regra em tasks.
+  /// Nova versão da regra recorrente a partir de [effectiveFrom].
+  Future<void> updateRecurrenceRule({
+    required int taskId,
+    required DateTime effectiveFrom,
+    required String recurringDays,
+    required String title,
+    String? description,
+    String? time,
+    List<Subtask>? subtasks,
+  }) async {
+    final effectiveStr = WeekdayUtils.toDateString(effectiveFrom);
+    await _db.upsertRecurrenceRule(
+      taskId: taskId,
+      effectiveFrom: effectiveStr,
+      recurringDays: recurringDays,
+      title: title,
+      description: description,
+      time: time,
+    );
+
+    final current = await _db.getTaskById(taskId);
+    if (current != null) {
+      await _db.updateTask(
+        current.copyWith(
+          title: title,
+          description: description,
+          time: time,
+          recurringDays: recurringDays,
+          isRecurring: true,
+          clearDueDate: true,
+        ),
+      );
+    }
+
+    if (subtasks != null) {
+      await _db.deleteSubtasksByTask(taskId);
+      for (final sub in subtasks) {
+        await _db.insertSubtask(sub.copyWith(taskId: taskId));
+      }
+    }
+  }
+
+  /// Converte avulsa em recorrente preservando a data original quando necessário.
+  Future<void> convertToRecurring({
+    required Task task,
+    required DateTime effectiveFrom,
+    required String recurringDays,
+    required String title,
+    String? description,
+    String? time,
+    required List<Subtask> subtasks,
+  }) async {
+    final taskId = task.id!;
+    final dueDate = task.dueDate;
+    final wasCompleted = task.completed;
+    final ruleStart = dueDate ?? WeekdayUtils.toDateString(effectiveFrom);
+
+    await _db.updateTask(
+      task.copyWith(
+        title: title,
+        description: description,
+        time: time,
+        isRecurring: true,
+        recurringDays: recurringDays,
+        completed: false,
+        clearDueDate: true,
+      ),
+    );
+
+    if (wasCompleted) {
+      final completionDate = dueDate ?? WeekdayUtils.toDateString(effectiveFrom);
+      await _db.setRecurringCompletion(
+        taskId: taskId,
+        dateStr: completionDate,
+        completed: true,
+      );
+    }
+
+    if (dueDate != null) {
+      final weekday = DateTime.parse(dueDate).weekday;
+      if (!WeekdayUtils.daysFromStorage(recurringDays).contains(weekday)) {
+        await _db.ensureOccurrenceAnchor(taskId: taskId, dateStr: dueDate);
+      }
+    }
+
+    await _db.upsertRecurrenceRule(
+      taskId: taskId,
+      effectiveFrom: ruleStart,
+      recurringDays: recurringDays,
+      title: title,
+      description: description,
+      time: time,
+    );
+
+    await _db.deleteSubtasksByTask(taskId);
+    for (final sub in subtasks) {
+      await _db.insertSubtask(sub.copyWith(taskId: taskId));
+    }
+  }
+
   Future<void> updateOccurrence(
     int taskId,
     DateTime date, {
@@ -100,13 +209,11 @@ class TaskService {
     await _db.deleteTask(id);
   }
 
-  /// Cancela somente a ocorrência recorrente na data informada.
   Future<void> cancelOccurrence(int taskId, DateTime date) async {
     final dateStr = WeekdayUtils.toDateString(date);
     await _db.cancelOccurrence(taskId: taskId, dateStr: dateStr);
   }
 
-  /// Conclusão unificada por data concreta.
   Future<void> toggleTaskCompleted({
     required Task task,
     required bool completed,
@@ -123,8 +230,6 @@ class TaskService {
       await _db.toggleOneOffCompleted(task.id!, completed);
     }
   }
-
-  // ─── SUBTASKS ─────────────────────────────────────────────
 
   Future<void> toggleSubtaskCompleted(
     int subtaskId,
@@ -146,5 +251,12 @@ class TaskService {
 
   Future<void> deleteSubtask(int id) async {
     await _db.deleteSubtask(id);
+  }
+
+  String _effectiveFromString(String createdAt) {
+    if (createdAt.length >= 10) {
+      return createdAt.substring(0, 10);
+    }
+    return WeekdayUtils.todayString();
   }
 }

@@ -37,6 +37,12 @@ class Task {
   String? occurrenceDescriptionOverride;
   String? occurrenceTimeOverride;
 
+  /// Campos da regra vigente na [occurrenceDate] (runtime).
+  String? ruleTitleForDate;
+  String? ruleDescriptionForDate;
+  String? ruleTimeForDate;
+  String? ruleRecurringDaysForDate;
+
   Task({
     this.id,
     required this.title,
@@ -55,17 +61,34 @@ class Task {
     this.occurrenceTitleOverride,
     this.occurrenceDescriptionOverride,
     this.occurrenceTimeOverride,
+    this.ruleTitleForDate,
+    this.ruleDescriptionForDate,
+    this.ruleTimeForDate,
+    this.ruleRecurringDaysForDate,
   });
 
-  /// Título efetivo: override da ocorrência → valor da regra.
-  String get effectiveTitle => occurrenceTitleOverride ?? title;
+  /// Título efetivo: override → regra da data → valor em tasks.
+  String get effectiveTitle =>
+      occurrenceTitleOverride ?? ruleTitleForDate ?? title;
 
-  /// Descrição efetiva: override da ocorrência → valor da regra.
+  /// Descrição efetiva: override → regra da data → valor em tasks.
   String? get effectiveDescription =>
-      occurrenceDescriptionOverride ?? description;
+      occurrenceDescriptionOverride ?? ruleDescriptionForDate ?? description;
 
-  /// Horário efetivo: override da ocorrência → valor da regra.
-  String? get effectiveTime => occurrenceTimeOverride ?? time;
+  /// Horário efetivo: override → regra da data → valor em tasks.
+  String? get effectiveTime =>
+      occurrenceTimeOverride ?? ruleTimeForDate ?? time;
+
+  /// Dias da regra vigente na data exibida (ou fallback em tasks).
+  List<int> get displayRecurringDaysList {
+    final raw = ruleRecurringDaysForDate ?? recurringDays;
+    if (raw == null || raw.trim().isEmpty) return [];
+    return raw
+        .split(',')
+        .map((e) => int.tryParse(e.trim()))
+        .whereType<int>()
+        .toList();
+  }
 
   /// Converte "1,3,5" em lista de inteiros [1, 3, 5].
   List<int> get recurringDaysList {
@@ -131,6 +154,10 @@ class Task {
     String? occurrenceTitleOverride,
     String? occurrenceDescriptionOverride,
     String? occurrenceTimeOverride,
+    String? ruleTitleForDate,
+    String? ruleDescriptionForDate,
+    String? ruleTimeForDate,
+    String? ruleRecurringDaysForDate,
     bool clearDueDate = false,
     bool clearRecurringDays = false,
     bool clearTime = false,
@@ -162,6 +189,12 @@ class Task {
       occurrenceTimeOverride: clearOccurrenceOverrides
           ? null
           : (occurrenceTimeOverride ?? this.occurrenceTimeOverride),
+      ruleTitleForDate: ruleTitleForDate ?? this.ruleTitleForDate,
+      ruleDescriptionForDate:
+          ruleDescriptionForDate ?? this.ruleDescriptionForDate,
+      ruleTimeForDate: ruleTimeForDate ?? this.ruleTimeForDate,
+      ruleRecurringDaysForDate:
+          ruleRecurringDaysForDate ?? this.ruleRecurringDaysForDate,
     );
   }
 }

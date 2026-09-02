@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/task_form_mode.dart';
 import '../models/task.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
@@ -88,11 +89,60 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openForm({Task? task}) async {
+    if (task != null && task.isRecurring) {
+      await _openRecurringEditChoice(task);
+      return;
+    }
+
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => TaskFormScreen(task: task),
+        fullscreenDialog: true,
+      ),
+    );
+    if (result == true) _loadTasks(query: _searchQuery);
+  }
+
+  Future<void> _openRecurringEditChoice(Task task) async {
+    final choice = await showModalBottomSheet<TaskFormMode>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.event_note_outlined),
+              title: const Text('Editar esta ocorrência'),
+              subtitle: Text(
+                Validators.formatDateDisplay(task.occurrenceDate),
+              ),
+              onTap: () => Navigator.pop(ctx, TaskFormMode.occurrence),
+            ),
+            ListTile(
+              leading: const Icon(Icons.repeat_rounded),
+              title: const Text('Editar rotina'),
+              subtitle: const Text('Dias, horário e regra a partir de uma data'),
+              onTap: () => Navigator.pop(ctx, TaskFormMode.rule),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == null || !mounted) return;
+
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => TaskFormScreen(
           task: task,
-          occurrenceDate: task?.isRecurring == true ? task?.occurrenceDate : null,
+          mode: choice,
+          occurrenceDate: choice == TaskFormMode.occurrence
+              ? task.occurrenceDate
+              : null,
+          ruleEffectiveFromDefault: _selectedDate,
         ),
         fullscreenDialog: true,
       ),

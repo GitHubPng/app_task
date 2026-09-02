@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/task_form_mode.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
 import '../services/task_service.dart';
@@ -8,12 +9,22 @@ import '../utils/weekday_utils.dart';
 import '../widgets/subtask_widget.dart';
 
 class TaskFormScreen extends StatefulWidget {
-  final Task? task; // null = create mode, non-null = edit mode
+  final Task? task;
+  final TaskFormMode mode;
 
-  /// Quando definido, edição afeta somente esta ocorrência da rotina.
+  /// Data da ocorrência em edição pontual.
   final String? occurrenceDate;
 
-  const TaskFormScreen({super.key, this.task, this.occurrenceDate});
+  /// Data inicial sugerida para alteração da rotina.
+  final DateTime? ruleEffectiveFromDefault;
+
+  const TaskFormScreen({
+    super.key,
+    this.task,
+    this.mode = TaskFormMode.standard,
+    this.occurrenceDate,
+    this.ruleEffectiveFromDefault,
+  });
 
   @override
   State<TaskFormScreen> createState() => _TaskFormScreenState();
@@ -32,32 +43,42 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   final Set<int> _selectedDays = {};
   String? _selectedTime;
   String? _selectedDate;
+  String? _ruleEffectiveFrom;
   List<Subtask> _subtasks = [];
   bool _isSaving = false;
+  bool _wasRecurring = false;
 
   bool get _isEditMode => widget.task != null;
 
-  /// Edição pontual de uma ocorrência recorrente (não altera a regra).
   bool get _isOccurrenceEdit =>
-      _isEditMode &&
-      widget.task!.isRecurring &&
-      widget.occurrenceDate != null;
+      _isEditMode && widget.mode == TaskFormMode.occurrence;
+
+  bool get _isRuleEdit => _isEditMode && widget.mode == TaskFormMode.rule;
 
   @override
   void initState() {
     super.initState();
     if (_isEditMode) {
       final t = widget.task!;
-      _titleController.text =
-          _isOccurrenceEdit ? t.effectiveTitle : t.title;
-      _descriptionController.text =
-          (_isOccurrenceEdit ? t.effectiveDescription : t.description) ?? '';
-      _isRecurring = t.isRecurring;
+      _wasRecurring = t.isRecurring;
+      _titleController.text = _isOccurrenceEdit ? t.effectiveTitle : t.title;
+      _descriptionController.text = _isOccurrenceEdit
+          ? (t.effectiveDescription ?? '')
+          : (t.description ?? '');
+      _isRecurring = t.isRecurring || _isRuleEdit;
       _selectedDate = t.dueDate;
-      _selectedTime =
-          _isOccurrenceEdit ? t.effectiveTime : t.time;
-      _selectedDays.addAll(t.recurringDaysList);
+      _selectedTime = _isOccurrenceEdit ? t.effectiveTime : t.time;
+      _selectedDays.addAll(
+        _isOccurrenceEdit || _isRuleEdit
+            ? t.displayRecurringDaysList
+            : t.recurringDaysList,
+      );
       _subtasks = List.from(t.subtasks);
+
+      if (_isRuleEdit) {
+        final defaultDate = widget.ruleEffectiveFromDefault ?? DateTime.now();
+        _ruleEffectiveFrom = WeekdayUtils.toDateString(defaultDate);
+      }
     } else {
       // Nova tarefa: dia de hoje pré-marcado na rotina.
       _selectedDays.add(DateTime.now().weekday);
@@ -70,6 +91,35 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     _descriptionController.dispose();
     _subtaskController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickRuleEffectiveFrom() async {
+    final now = DateTime.now();
+    final initial = _ruleEffectiveFrom != null
+        ? DateTime.tryParse(_ruleEffectiveFrom!) ?? now
+        : now;
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 5),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: AppTheme.primary,
+            onPrimary: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _ruleEffectiveFrom = WeekdayUtils.toDateString(picked);
+      });
+    }
   }
 
   Future<void> _pickDate() async {
@@ -156,8 +206,15 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       return;
     }
 
-    // RN02: data não retroativa (só avulsas).
+    if (_isRuleEdit &&
+        (_ruleEffectiveFrom == null || _ruleEffectiveFrom!.isEmpty)) {
+      _showSnack('Selecione a data de início da rotina.', isError: true);
+      return;
+    }
+
+    // RN02: data não retroativa (só avulsas novas).
     if (!_isRecurring &&
+        !_isEditMode &&
         _selectedDate != null &&
         Validators.isDateInPast(_selectedDate!)) {
       _showSnack('A data não pode ser anterior à data atual.', isError: true);
@@ -185,6 +242,40 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           );
           if (mounted) {
             _showSnack('Ocorrência atualizada!');
+            Navigator.of(context).pop(true);
+          }
+        } else if (_isRuleEdit) {
+          await _taskService.updateRecurrenceRule(
+            taskId: widget.task!.id!,
+            effectiveFrom: DateTime.parse(_ruleEffectiveFrom!),
+            recurringDays: recurringDays!,
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim().isEmpty
+                ? null
+                : _descriptionController.text.trim(),
+            time: _selectedTime,
+            subtasks: _subtasks,
+          );
+          if (mounted) {
+            _showSnack('Rotina atualizada!');
+            Navigator.of(context).pop(true);
+          }
+        } else if (!_wasRecurring && _isRecurring) {
+          await _taskService.convertToRecurring(
+            task: widget.task!,
+            effectiveFrom: _selectedDate != null
+                ? DateTime.parse(_selectedDate!)
+                : DateTime.now(),
+            recurringDays: recurringDays!,
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim().isEmpty
+                ? null
+                : _descriptionController.text.trim(),
+            time: _selectedTime,
+            subtasks: _subtasks,
+          );
+          if (mounted) {
+            _showSnack('Tarefa convertida em rotina!');
             Navigator.of(context).pop(true);
           }
         } else {
@@ -255,7 +346,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         title: Text(
           _isOccurrenceEdit
               ? 'Editar Ocorrência'
-              : (_isEditMode ? 'Editar Tarefa' : 'Nova Tarefa'),
+              : _isRuleEdit
+                  ? 'Editar Rotina'
+                  : (_isEditMode ? 'Editar Tarefa' : 'Nova Tarefa'),
         ),
         leading: IconButton(
           icon: const Icon(Icons.close),
@@ -311,6 +404,51 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               ),
               const SizedBox(height: 20),
 
+              if (_isRuleEdit) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppTheme.primary.withOpacity(0.2),
+                    ),
+                  ),
+                  child: const Text(
+                    'Alterações nesta tela atualizam a regra da rotina a partir '
+                    'da data escolhida. Ocorrências anteriores permanecem intactas.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppTheme.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _label('Válida a partir de *'),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: _pickRuleEffectiveFrom,
+                  child: AbsorbPointer(
+                    child: TextFormField(
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        hintText: 'Data de início da nova regra',
+                        prefixIcon: Icon(
+                          Icons.calendar_month_rounded,
+                          color: AppTheme.primary,
+                        ),
+                      ),
+                      controller: TextEditingController(
+                        text: Validators.formatDateDisplay(_ruleEffectiveFrom),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+
               if (_isOccurrenceEdit) ...[
                 Container(
                   width: double.infinity,
@@ -335,8 +473,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 const SizedBox(height: 20),
               ],
 
-              // Tipo de tarefa — bloqueado em edição de ocorrência.
-              if (!_isOccurrenceEdit) ...[
+              // Tipo de tarefa — bloqueado em edição de ocorrência/rotina.
+              if (!_isOccurrenceEdit && !_isRuleEdit) ...[
                 _label('Tipo de tarefa'),
                 const SizedBox(height: 8),
                 SegmentedButton<bool>(
@@ -363,40 +501,42 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               if (_isRecurring && !_isOccurrenceEdit) ...[
                 _label('Dias da semana *'),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                Row(
                   children: List.generate(7, (i) {
                     final day = i + 1;
                     final selected = _selectedDays.contains(day);
-                    return FilterChip(
-                      label: Text(WeekdayUtils.shortLabels[i]),
-                      selected: selected,
-                      onSelected: (val) {
-                        setState(() {
-                          if (val) {
-                            _selectedDays.add(day);
-                          } else {
-                            _selectedDays.remove(day);
-                          }
-                        });
-                      },
-                      selectedColor: AppTheme.primary.withOpacity(0.18),
-                      checkmarkColor: AppTheme.primary,
-                      labelStyle: TextStyle(
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.w500,
-                        color: selected
-                            ? AppTheme.primary
-                            : AppTheme.textSecondary,
-                      ),
-                      side: BorderSide(
-                        color: selected ? AppTheme.primary : AppTheme.border,
+                    return Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: FilterChip(
+                          label: Text(
+                            WeekdayUtils.shortLabels[i],
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          selected: selected,
+                          onSelected: (val) {
+                            setState(() {
+                              if (val) {
+                                _selectedDays.add(day);
+                              } else {
+                                _selectedDays.remove(day);
+                              }
+                            });
+                          },
+                          selectedColor: AppTheme.primary.withOpacity(0.18),
+                          checkmarkColor: AppTheme.primary,
+                          showCheckmark: true,
+                          padding: EdgeInsets.zero,
+                          labelPadding: EdgeInsets.zero,
+                          side: BorderSide(
+                            color: selected ? AppTheme.primary : AppTheme.border,
+                          ),
+                        ),
                       ),
                     );
                   }),
                 ),
-              ] else if (!_isOccurrenceEdit) ...[
+              ] else if (!_isOccurrenceEdit && !_isRuleEdit) ...[
                 _label('Data de Vencimento'),
                 const SizedBox(height: 8),
                 GestureDetector(

@@ -6,7 +6,11 @@ import '../models/subtask.dart';
 import '../models/task_completion.dart';
 import '../models/task_occurrence.dart';
 import '../models/subtask_completion.dart';
+import '../models/task_recurrence_rule.dart';
 import '../utils/weekday_utils.dart';
+
+/// Data usada na migração para cobrir todo histórico existente.
+const kLegacyRuleEffectiveFrom = '1970-01-01';
 
 class DatabaseHelper {
   static DatabaseHelper instance = DatabaseHelper._internal();
@@ -34,7 +38,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -46,6 +50,7 @@ class DatabaseHelper {
   Future<void> _onCreate(Database db, int version) async {
     await _createCoreTables(db);
     await _createOccurrenceTables(db);
+    await _createRecurrenceRulesTable(db);
     if (!_skipSeed) {
       await _seedWeeklyRoutine(db);
     }
@@ -112,6 +117,22 @@ class DatabaseHelper {
         completed INTEGER NOT NULL DEFAULT 1,
         FOREIGN KEY(subtask_id) REFERENCES subtasks(id) ON DELETE CASCADE,
         UNIQUE(subtask_id, occurrence_date)
+      )
+    ''');
+  }
+
+  Future<void> _createRecurrenceRulesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE task_recurrence_rules(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        effective_from TEXT NOT NULL,
+        recurring_days TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        time TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        UNIQUE(task_id, effective_from)
       )
     ''');
   }
@@ -194,6 +215,36 @@ class DatabaseHelper {
         )
       ''');
     }
+
+    if (oldVersion < 4) {
+      if (!await _tableExists(db, 'task_recurrence_rules')) {
+        await _createRecurrenceRulesTable(db);
+      }
+
+      final recurringTasks = await db.query(
+        'tasks',
+        where: 'is_recurring = 1',
+      );
+      for (final row in recurringTasks) {
+        final taskId = row['id'] as int;
+        final existing = await db.query(
+          'task_recurrence_rules',
+          where: 'task_id = ?',
+          whereArgs: [taskId],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) continue;
+
+        await db.insert('task_recurrence_rules', {
+          'task_id': taskId,
+          'effective_from': kLegacyRuleEffectiveFrom,
+          'recurring_days': row['recurring_days'] ?? '',
+          'title': row['title'],
+          'description': row['description'],
+          'time': row['time'],
+        });
+      }
+    }
   }
 
   Future<bool> _tableExists(Database db, String table) async {
@@ -244,7 +295,7 @@ class DatabaseHelper {
     ];
 
     for (final seed in seeds) {
-      await db.insert('tasks', {
+      final taskId = await db.insert('tasks', {
         'title': seed['title'],
         'description': null,
         'due_date': null,
@@ -254,6 +305,14 @@ class DatabaseHelper {
         'recurring_days': seed['days'],
         'time': seed['time'],
         'archived': 0,
+      });
+      await db.insert('task_recurrence_rules', {
+        'task_id': taskId,
+        'effective_from': kLegacyRuleEffectiveFrom,
+        'recurring_days': seed['days'],
+        'title': seed['title'],
+        'description': null,
+        'time': seed['time'],
       });
     }
   }
@@ -301,20 +360,7 @@ class DatabaseHelper {
 
     final recurringMaps = await db.query(
       'tasks',
-      where: '''
-        archived = 0 AND is_recurring = 1 AND (
-          recurring_days = ? OR
-          recurring_days LIKE ? OR
-          recurring_days LIKE ? OR
-          recurring_days LIKE ?
-        )
-      ''',
-      whereArgs: [
-        '$weekday',
-        '$weekday,%',
-        '%,$weekday',
-        '%,$weekday,%',
-      ],
+      where: 'archived = 0 AND is_recurring = 1',
     );
 
     final oneOffMaps = await db.query(
@@ -323,8 +369,14 @@ class DatabaseHelper {
       whereArgs: [dateStr],
     );
 
-    final maps = [...recurringMaps, ...oneOffMaps];
-    final tasks = await _hydrateTasksForDate(maps, dateStr);
+    final recurringTasks = await _hydrateRecurringTasksForDate(
+      recurringMaps,
+      dateStr,
+      weekday,
+    );
+
+    final oneOffTasks = await _hydrateTasksForDate(oneOffMaps, dateStr);
+    final tasks = [...recurringTasks, ...oneOffTasks];
 
     tasks.sort(_compareByEffectiveTimeThenCreated);
     return tasks;
@@ -373,6 +425,86 @@ class DatabaseHelper {
       {'completed': completed ? 1 : 0},
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  // ─── TASK RECURRENCE RULES ────────────────────────────────
+
+  Future<TaskRecurrenceRule?> getRecurrenceRuleForDate(
+    int taskId,
+    String dateStr,
+  ) async {
+    final db = await database;
+    final maps = await db.query(
+      'task_recurrence_rules',
+      where: 'task_id = ? AND effective_from <= ?',
+      whereArgs: [taskId, dateStr],
+      orderBy: 'effective_from DESC',
+      limit: 1,
+    );
+    if (maps.isEmpty) return null;
+    return TaskRecurrenceRule.fromMap(maps.first);
+  }
+
+  /// UPSERT de versão da regra a partir de [effectiveFrom].
+  Future<void> upsertRecurrenceRule({
+    required int taskId,
+    required String effectiveFrom,
+    required String recurringDays,
+    required String title,
+    String? description,
+    String? time,
+  }) async {
+    final db = await database;
+    final existing = await db.query(
+      'task_recurrence_rules',
+      where: 'task_id = ? AND effective_from = ?',
+      whereArgs: [taskId, effectiveFrom],
+      limit: 1,
+    );
+
+    final payload = {
+      'recurring_days': recurringDays,
+      'title': title,
+      'description': description,
+      'time': time,
+    };
+
+    if (existing.isNotEmpty) {
+      await db.update(
+        'task_recurrence_rules',
+        payload,
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
+    } else {
+      await db.insert(
+        'task_recurrence_rules',
+        {
+          'task_id': taskId,
+          'effective_from': effectiveFrom,
+          ...payload,
+        },
+      );
+    }
+  }
+
+  /// Garante aparição na data (ex.: conversão de avulsa com due_date fora dos dias).
+  Future<void> ensureOccurrenceAnchor({
+    required int taskId,
+    required String dateStr,
+  }) async {
+    final existing = await getOccurrence(taskId, dateStr);
+    if (existing != null) return;
+
+    final db = await database;
+    await db.insert(
+      'task_occurrences',
+      TaskOccurrence(
+        taskId: taskId,
+        occurrenceDate: dateStr,
+      ).toMap()
+        ..remove('id'),
     );
   }
 
@@ -583,6 +715,68 @@ class DatabaseHelper {
 
   // ─── helpers internos ─────────────────────────────────────
 
+  Future<List<Task>> _hydrateRecurringTasksForDate(
+    List<Map<String, dynamic>> maps,
+    String dateStr,
+    int weekday,
+  ) async {
+    final tasks = <Task>[];
+    for (final map in maps) {
+      final taskId = map['id'] as int;
+      final rule = await getRecurrenceRuleForDate(taskId, dateStr);
+      if (rule == null) continue;
+
+      final occurrence = await getOccurrence(taskId, dateStr);
+      if (occurrence?.cancelled == true) continue;
+
+      final inRule = rule.recurringDaysList.contains(weekday);
+      final hasAnchor = occurrence != null && !inRule;
+      if (!inRule && !hasAnchor) continue;
+
+      final task = Task.fromMap(map);
+      task.occurrenceDate = dateStr;
+      _applyRuleToTask(task, rule);
+      await _applyOccurrenceAndCompletions(task, dateStr, occurrence);
+      tasks.add(task);
+    }
+    return tasks;
+  }
+
+  void _applyRuleToTask(Task task, TaskRecurrenceRule rule) {
+    task.ruleTitleForDate = rule.title;
+    task.ruleDescriptionForDate = rule.description;
+    task.ruleTimeForDate = rule.time;
+    task.ruleRecurringDaysForDate = rule.recurringDays;
+  }
+
+  Future<void> _applyOccurrenceAndCompletions(
+    Task task,
+    String dateStr,
+    TaskOccurrence? occurrence,
+  ) async {
+    if (occurrence != null) {
+      task.occurrenceId = occurrence.id;
+      if (occurrence.title != null) {
+        task.occurrenceTitleOverride = occurrence.title;
+      }
+      if (occurrence.description != null) {
+        task.occurrenceDescriptionOverride = occurrence.description;
+      }
+      if (occurrence.time != null) {
+        task.occurrenceTimeOverride = occurrence.time;
+      }
+      task.isOccurrenceOverride = occurrence.title != null ||
+          occurrence.description != null ||
+          occurrence.time != null;
+    }
+
+    task.completed = await isRecurringCompletedOn(task.id!, dateStr);
+    task.subtasks = await getSubtasks(task.id!);
+    for (final sub in task.subtasks) {
+      sub.completed = await isSubtaskCompletedOn(sub.id!, dateStr);
+    }
+  }
+
   Future<List<Task>> _hydrateTasksForDate(
     List<Map<String, dynamic>> maps,
     String dateStr, {
@@ -594,30 +788,13 @@ class DatabaseHelper {
       task.occurrenceDate = dateStr;
 
       if (task.isRecurring) {
+        final rule = await getRecurrenceRuleForDate(task.id!, dateStr);
+        if (rule != null) {
+          _applyRuleToTask(task, rule);
+        }
         final occurrence = await getOccurrence(task.id!, dateStr);
-        if (occurrence != null) {
-          if (occurrence.cancelled) continue;
-
-          task.occurrenceId = occurrence.id;
-          if (occurrence.title != null) {
-            task.occurrenceTitleOverride = occurrence.title;
-          }
-          if (occurrence.description != null) {
-            task.occurrenceDescriptionOverride = occurrence.description;
-          }
-          if (occurrence.time != null) {
-            task.occurrenceTimeOverride = occurrence.time;
-          }
-          task.isOccurrenceOverride = occurrence.title != null ||
-              occurrence.description != null ||
-              occurrence.time != null;
-        }
-
-        task.completed = await isRecurringCompletedOn(task.id!, dateStr);
-        task.subtasks = await getSubtasks(task.id!);
-        for (final sub in task.subtasks) {
-          sub.completed = await isSubtaskCompletedOn(sub.id!, dateStr);
-        }
+        if (occurrence?.cancelled == true) continue;
+        await _applyOccurrenceAndCompletions(task, dateStr, occurrence);
       } else {
         task.subtasks = await getSubtasks(task.id!);
       }

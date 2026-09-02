@@ -190,7 +190,7 @@ class TaskTile extends StatelessWidget {
     }
 
     if (task.isRecurring) {
-      final days = task.recurringDaysList
+      final days = task.displayRecurringDaysList
           .map(WeekdayUtils.shortLabel)
           .where((s) => s.isNotEmpty)
           .join(' · ');
