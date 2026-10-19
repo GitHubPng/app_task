@@ -25,6 +25,8 @@ antigo quando aquele dia foi alterado.
 | D6 | Sem aviso para ocorrência cancelada, já concluída, sem início ou com horário de aviso no passado | aprovado (Parte 1) |
 | D7 | `flutter_local_notifications` **17.2.4** (compileSdk 34) + `timezone` ^0.9; **sem** `flutter_timezone` | aprovado (Parte 2) |
 | D8 | CI roda `flutter test` + build também em **pull requests** | aprovado (Parte 2) |
+| D9 | Home mostra o **próximo aviso agendado** | usuário (extra) |
+| D10 | Versão do app sobe para `1.3.0+4` | pendência do PR anterior |
 
 Fora de escopo: ações na notificação (Concluir/Adiar), aviso no fim/pausa, chave global,
 atualização em segundo plano sem abrir o app, publicação na Play Store.
@@ -75,7 +77,7 @@ Casca fina sobre o plugin, sem lógica de negócio:
   `tz.TZDateTime.from(fireAt.toUtc(), tz.UTC)` (instante absoluto; respeita o fuso do aparelho).
 - Tocar na notificação abre o app (comportamento padrão; home já abre no dia de hoje).
 
-`TaskService.syncReminders({DateTime? now})` monta `tasksByDay` (14 dias), chama
+`TaskService.syncReminders({DateTime? now})` → `Future<List<PlannedReminder>>` monta `tasksByDay` (14 dias), chama
 `planReminders` e entrega a um `ReminderScheduler` injetável (interface com `replaceAll`), para
 testar sem plugin. Chamado:
 
@@ -108,6 +110,11 @@ podem atrasar/suprimir; solução é remover o app da otimização de bateria.
   Ao ligar: pede permissão; negada → volta para desligado + snack
   "Permita notificações nas configurações do Android para receber lembretes."
 - **Card**: ícone `notifications_active_outlined` no chip de horário quando o lembrete está ligado.
+- **Home — próximo aviso**: linha discreta acima da lista,
+  `"Próximo aviso: {título} às {HH:mm} · {Seg} {dd/MM}"`, usando o retorno do último
+  `syncReminders()` (o que de fato foi agendado). A cada tique do relógio de 1 min já existente,
+  mostra o primeiro com `fireAt > agora`. Oculta durante a busca e quando não há aviso.
+  Função pura `nextReminder(List<PlannedReminder>, DateTime now)` em `reminder_planner.dart`.
 
 ## CI
 
@@ -119,7 +126,7 @@ passos `flutter test` antes do build. Upload do APK continua.
 - `reminder_planner_test.dart`: antecedência (0/15/60), padrão 15 com valor nulo, aviso no
   passado descartado, concluída descartada, sem início descartada, lembrete desligado descartado,
   override de horário do dia usado, corpo com e sem fim, ids estáveis e distintos entre datas e
-  tarefas.
+  tarefas; `nextReminder` ignora passados e escolhe o mais cedo.
 - `syncReminders` com scheduler falso: janela de 14 dias, ocorrência cancelada não agenda,
   concluir remove o aviso do dia.
 - Migração v6 → v7; backup v5/v6 importa com lembrete desligado; roundtrip v7 preserva.
