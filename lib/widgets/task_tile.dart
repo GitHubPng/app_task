@@ -12,9 +12,6 @@ class TaskTile extends StatelessWidget {
   final ValueChanged<bool>? onToggleCompleted;
   final ValueChanged<int>? onToggleSubtask;
 
-  /// Modo somente leitura (tela Arquivadas).
-  final bool readOnly;
-
   const TaskTile({
     super.key,
     required this.task,
@@ -22,14 +19,13 @@ class TaskTile extends StatelessWidget {
     this.onDelete,
     this.onToggleCompleted,
     this.onToggleSubtask,
-    this.readOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final completedSubtasks = task.subtasks.where((s) => s.completed).length;
     final totalSubtasks = task.subtasks.length;
-    final canToggle = !readOnly && onToggleCompleted != null;
+    final canToggle = onToggleCompleted != null;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -67,9 +63,8 @@ class TaskTile extends StatelessWidget {
                     activeColor: AppTheme.success,
                     shape: const CircleBorder(),
                     side: BorderSide(
-                      color: task.completed
-                          ? AppTheme.success
-                          : AppTheme.primary,
+                      color:
+                          task.completed ? AppTheme.success : AppTheme.primary,
                       width: 2,
                     ),
                   ),
@@ -97,20 +92,20 @@ class TaskTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (!readOnly) ...[
+                if (onEdit != null)
                   IconButton(
                     icon: const Icon(Icons.edit_outlined, size: 20),
                     color: AppTheme.primary,
                     onPressed: onEdit,
                     tooltip: 'Editar',
                   ),
+                if (onDelete != null)
                   IconButton(
                     icon: const Icon(Icons.delete_outline_rounded, size: 20),
                     color: AppTheme.danger,
                     onPressed: onDelete,
                     tooltip: 'Excluir',
                   ),
-                ],
               ],
             ),
           ),
@@ -167,7 +162,7 @@ class TaskTile extends StatelessWidget {
                   final sub = entry.value;
                   return SubtaskWidget(
                     subtask: sub,
-                    onToggle: (!readOnly && onToggleSubtask != null)
+                    onToggle: onToggleSubtask != null
                         ? () => onToggleSubtask!(index)
                         : null,
                   );

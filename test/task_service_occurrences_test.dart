@@ -6,7 +6,6 @@ import 'package:app_task/models/task.dart';
 import 'package:app_task/services/task_service.dart';
 import 'package:app_task/utils/weekday_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite/sqflite.dart';
 
 import 'helpers/test_database.dart';
 
@@ -258,7 +257,7 @@ void main() {
     });
 
     Future<Task> taskOn(DateTime day) async {
-      return (await loadTaskOnDate(service, day, 'Treino'))!;
+      return ((await loadTaskOnDate(service, day, 'Treino')))!;
     }
 
     test('conclusão isolada por ocorrência', () async {
@@ -326,13 +325,13 @@ void main() {
     });
 
     Future<Subtask> supinoOn(DateTime day) async {
-      final task = (await loadTaskOnDate(service, day, 'Treino'))!;
+      final task = ((await loadTaskOnDate(service, day, 'Treino')))!;
       return findSubtask(task, 'Supino')!;
     }
 
     test('conclusão de subtarefa isolada por data', () async {
       final monTask =
-          (await loadTaskOnDate(service, date(2026, 8, 31), 'Treino'))!;
+          ((await loadTaskOnDate(service, date(2026, 8, 31), 'Treino')))!;
       final supinoId = findSubtask(monTask, 'Supino')!.id!;
 
       await service.toggleSubtaskCompleted(
@@ -342,12 +341,12 @@ void main() {
         isRecurring: true,
       );
 
-      final mon = await loadTaskOnDate(service, date(2026, 8, 31), 'Treino')!;
+      final mon = (await loadTaskOnDate(service, date(2026, 8, 31), 'Treino'))!;
       expect(findSubtask(mon, 'Supino')!.completed, isTrue);
       expect(findSubtask(mon, 'Remada')!.completed, isFalse);
       expect(findSubtask(mon, 'Agachamento')!.completed, isFalse);
 
-      final wed = await loadTaskOnDate(service, date(2026, 9, 2), 'Treino')!;
+      final wed = (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))!;
       expect(findSubtask(wed, 'Supino')!.completed, isFalse);
       expect(findSubtask(wed, 'Remada')!.completed, isFalse);
       expect(findSubtask(wed, 'Agachamento')!.completed, isFalse);
@@ -375,7 +374,7 @@ void main() {
 
     test('subtasks.completed do template permanece false', () async {
       final monTask =
-          (await loadTaskOnDate(service, date(2026, 8, 31), 'Treino'))!;
+          ((await loadTaskOnDate(service, date(2026, 8, 31), 'Treino')))!;
       final supinoId = findSubtask(monTask, 'Supino')!.id!;
 
       await service.toggleSubtaskCompleted(
@@ -422,7 +421,6 @@ void main() {
 
       final stored = await db.getTaskById(taskId);
       expect(stored?.completed, isTrue);
-      expect(stored?.archived, isFalse);
 
       final visible = await service.getTasksForDate(date(2026, 9, 3));
       expect(containsTitle(visible, 'Entregar trabalho'), isTrue);
@@ -469,7 +467,8 @@ void main() {
       await disposeTestTaskService(db: db, dir: dir);
     });
 
-    test('semanas diferentes retornam datas corretas sem alterar regra', () async {
+    test('semanas diferentes retornam datas corretas sem alterar regra',
+        () async {
       final week1Start = date(2026, 8, 31);
       final week2Start = WeekdayUtils.addWeeks(week1Start, 1);
 

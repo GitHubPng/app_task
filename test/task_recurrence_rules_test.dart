@@ -1,10 +1,7 @@
 import 'dart:io';
 
 import 'package:app_task/database/database_helper.dart';
-import 'package:app_task/models/subtask.dart';
-import 'package:app_task/models/task.dart';
 import 'package:app_task/services/task_service.dart';
-import 'package:app_task/utils/weekday_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/test_database.dart';
@@ -75,11 +72,13 @@ void main() {
       );
 
       expect(
-        (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))?.effectiveTime,
+        (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))
+            ?.effectiveTime,
         '17:00',
       );
       expect(
-        (await loadTaskOnDate(service, date(2026, 9, 8), 'Treino'))?.effectiveTime,
+        (await loadTaskOnDate(service, date(2026, 9, 8), 'Treino'))
+            ?.effectiveTime,
         '15:00',
       );
     });
@@ -125,7 +124,8 @@ void main() {
       );
     });
 
-    test('altera título/descrição/horário padrão sem afetar override', () async {
+    test('altera título/descrição/horário padrão sem afetar override',
+        () async {
       await service.updateOccurrence(
         taskId,
         date(2026, 9, 2),
@@ -148,13 +148,15 @@ void main() {
         '17:00',
       );
 
-      final future = await loadTaskOnDate(service, date(2026, 9, 8), 'Treino leve');
+      final future =
+          await loadTaskOnDate(service, date(2026, 9, 8), 'Treino leve');
       expect(future?.effectiveTitle, 'Treino leve');
       expect(future?.effectiveDescription, 'foco em cardio');
       expect(future?.effectiveTime, '16:00');
     });
 
-    test('editar rotina não altera tasks.time da regra anterior no histórico', () async {
+    test('editar rotina não altera tasks.time da regra anterior no histórico',
+        () async {
       await service.updateRecurrenceRule(
         taskId: taskId,
         effectiveFrom: date(2026, 9, 5),
@@ -164,7 +166,8 @@ void main() {
       );
 
       expect(
-        (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))?.effectiveTime,
+        (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))
+            ?.effectiveTime,
         '15:00',
       );
 
@@ -210,14 +213,18 @@ void main() {
         subtasks: [],
       );
 
-      expect(await taskAppearsOn(service, date(2026, 9, 3), 'Estudar Flutter'), isTrue);
+      expect(await taskAppearsOn(service, date(2026, 9, 3), 'Estudar Flutter'),
+          isTrue);
       expect(
         (await loadTaskOnDate(service, date(2026, 9, 3), 'Estudar Flutter'))!
             .completed,
         isTrue,
       );
-      expect(await taskAppearsOn(service, date(2026, 9, 4), 'Estudar Flutter'), isFalse);
-      expect(await taskAppearsOn(service, date(2026, 9, 5), 'Estudar Flutter'), isTrue);
+      // 04/09 = sexta (na regra); 05/09 = sábado (fora).
+      expect(await taskAppearsOn(service, date(2026, 9, 4), 'Estudar Flutter'),
+          isTrue);
+      expect(await taskAppearsOn(service, date(2026, 9, 5), 'Estudar Flutter'),
+          isFalse);
     });
 
     test('ancora due_date quando weekday não está na nova regra', () async {
@@ -236,8 +243,10 @@ void main() {
       );
 
       // 03/09 é quinta — fora de seg/qua/sex, mas deve permanecer visível.
-      expect(await taskAppearsOn(service, date(2026, 9, 3), 'Estudar Flutter'), isTrue);
-      expect(await taskAppearsOn(service, date(2026, 9, 7), 'Estudar Flutter'), isTrue);
+      expect(await taskAppearsOn(service, date(2026, 9, 3), 'Estudar Flutter'),
+          isTrue);
+      expect(await taskAppearsOn(service, date(2026, 9, 7), 'Estudar Flutter'),
+          isTrue);
     });
   });
 
@@ -278,8 +287,10 @@ void main() {
       expect(await taskAppearsOn(service, date(2026, 9, 10), 'Treino'), isTrue);
       expect(await taskAppearsOn(service, date(2026, 9, 15), 'Treino'), isTrue);
       expect(await taskAppearsOn(service, date(2026, 9, 17), 'Treino'), isTrue);
-      expect(await taskAppearsOn(service, date(2026, 9, 14), 'Treino'), isFalse);
-      expect(await taskAppearsOn(service, date(2026, 9, 16), 'Treino'), isFalse);
+      expect(
+          await taskAppearsOn(service, date(2026, 9, 14), 'Treino'), isFalse);
+      expect(
+          await taskAppearsOn(service, date(2026, 9, 16), 'Treino'), isFalse);
     });
   });
 }

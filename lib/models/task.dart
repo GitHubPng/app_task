@@ -18,9 +18,6 @@ class Task {
   /// Horário "HH:mm" para ordenar a lista do dia.
   String? time;
 
-  /// Arquivamento manual; não é mais setado automaticamente ao concluir avulsas.
-  bool archived;
-
   // ─── Campos runtime (agenda / ocorrência) ─────────────────
 
   /// Data concreta exibida na agenda (YYYY-MM-DD).
@@ -54,7 +51,6 @@ class Task {
     this.isRecurring = false,
     this.recurringDays,
     this.time,
-    this.archived = false,
     this.occurrenceDate,
     this.occurrenceId,
     this.isOccurrenceOverride = false,
@@ -116,7 +112,6 @@ class Task {
       'is_recurring': isRecurring ? 1 : 0,
       'recurring_days': recurringDays,
       'time': time,
-      'archived': archived ? 1 : 0,
     };
   }
 
@@ -132,7 +127,6 @@ class Task {
       isRecurring: (map['is_recurring'] as int? ?? 0) == 1,
       recurringDays: map['recurring_days'] as String?,
       time: map['time'] as String?,
-      archived: (map['archived'] as int? ?? 0) == 1,
     );
   }
 
@@ -147,7 +141,6 @@ class Task {
     bool? isRecurring,
     String? recurringDays,
     String? time,
-    bool? archived,
     String? occurrenceDate,
     int? occurrenceId,
     bool? isOccurrenceOverride,
@@ -175,7 +168,6 @@ class Task {
       recurringDays:
           clearRecurringDays ? null : (recurringDays ?? this.recurringDays),
       time: clearTime ? null : (time ?? this.time),
-      archived: archived ?? this.archived,
       occurrenceDate: occurrenceDate ?? this.occurrenceDate,
       occurrenceId: occurrenceId ?? this.occurrenceId,
       isOccurrenceOverride: isOccurrenceOverride ?? this.isOccurrenceOverride,

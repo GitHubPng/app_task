@@ -46,8 +46,10 @@ void main() {
       final oneOff = tasks.firstWhere((t) => t['title'] == 'Avulsa v2');
       expect(oneOff['due_date'], '2026-09-03');
 
+      // v5 remove o arquivamento: volta ao dia como concluída.
       final archived = tasks.firstWhere((t) => t['title'] == 'Arquivada v2');
-      expect(archived['archived'], 1);
+      expect(archived['archived'], 0);
+      expect(archived['completed'], 1);
 
       final subtasks = await db.query('subtasks');
       expect(subtasks.length, 2);
@@ -70,12 +72,12 @@ void main() {
       expect(occurrences, isEmpty);
     });
 
-    test('user_version é 3 após abertura', () async {
+    test('user_version é a versão atual após abertura', () async {
       final db = await openMigrated();
       final version = Sqflite.firstIntValue(
         await db.rawQuery('PRAGMA user_version'),
       );
-      expect(version, 3);
+      expect(version, 5);
     });
   });
 }

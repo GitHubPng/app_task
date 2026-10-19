@@ -4,7 +4,6 @@ import 'package:app_task/database/database_helper.dart';
 import 'package:app_task/models/subtask.dart';
 import 'package:app_task/models/task.dart';
 import 'package:app_task/services/task_service.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Inicializa sqflite FFI (desktop/CI).
