@@ -105,6 +105,15 @@ Horário (`time`) é opcional para **recorrentes e avulsas**, e ordena a lista d
 - **Desinstalar** o app ou “Limpar dados” apaga as tarefas — isso é comportamento do Android.
 - O APK só atualiza por cima se for assinado com a **mesma chave**. Veja abaixo.
 
+### Backup (exportar / importar)
+
+Menu ⋮ da home:
+- **Exportar tarefas** — salva um `.json` com todo o banco (tarefas, rotinas, conclusões, etapas).
+- **Importar tarefas** — **substitui** todas as tarefas atuais pelas do arquivo (pede confirmação).
+  O arquivo é validado antes; se for inválido, nada é alterado.
+
+O backup só importa em app com a mesma versão de banco (hoje, 5).
+
 ### Assinatura de release
 
 O build de release usa `android/key.properties` (fora do Git). Sem ele, cai na chave de debug,
@@ -203,6 +212,7 @@ dependencies:
   sqflite: ^2.3.3
   path: ^1.9.0
   intl: ^0.19.0
+  file_picker: ^8.3.2
 ```
 
 ---

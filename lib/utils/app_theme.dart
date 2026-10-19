@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   // NexCode brand colors
-  static const Color primary = Color(0xFF4F46E5);      // indigo
+  static const Color primary = Color(0xFF4F46E5); // indigo
   static const Color primaryDark = Color(0xFF3730A3);
   static const Color accent = Color(0xFF7C3AED);
   static const Color success = Color(0xFF10B981);

@@ -13,6 +13,8 @@ import '../utils/weekday_utils.dart';
 const kLegacyRuleEffectiveFrom = '1970-01-01';
 
 class DatabaseHelper {
+  static const schemaVersion = 5;
+
   static DatabaseHelper instance = DatabaseHelper._internal();
 
   Database? _database;
@@ -35,7 +37,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: schemaVersion,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },

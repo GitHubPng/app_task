@@ -1,6 +1,10 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../models/task_form_mode.dart';
 import '../models/task.dart';
+import '../services/backup_service.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/validators.dart';
@@ -18,6 +22,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _taskService = TaskService();
+  final _backupService = BackupService();
   final _searchController = TextEditingController();
 
   List<Task> _tasks = [];
@@ -257,6 +262,87 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showMessage(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? AppTheme.danger : AppTheme.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+  Future<void> _exportTasks() async {
+    try {
+      final json = await _backupService.exportToJson();
+      final stamp = WeekdayUtils.todayString();
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Salvar backup',
+        fileName: 'app_task_backup_$stamp.json',
+        bytes: utf8.encode(json),
+      );
+      if (path != null) _showMessage('Backup exportado.');
+    } catch (e) {
+      _showMessage('Erro ao exportar: $e', isError: true);
+    }
+  }
+
+  Future<void> _importTasks() async {
+    final FilePickerResult? picked;
+    try {
+      picked = await FilePicker.platform.pickFiles(withData: true);
+    } catch (e) {
+      _showMessage('Erro ao abrir arquivo: $e', isError: true);
+      return;
+    }
+    final bytes = picked?.files.single.bytes;
+    if (bytes == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Importar backup?',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'Todas as tarefas atuais serão SUBSTITUÍDAS pelas do backup. '
+          'Esta ação não pode ser desfeita.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Substituir',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final count = await _backupService.importFromJson(utf8.decode(bytes));
+      _showMessage('$count tarefa(s) importada(s).');
+      _loadTasks(query: _searchQuery);
+    } on BackupFormatException catch (e) {
+      _showMessage(e.message, isError: true);
+    } on FormatException {
+      _showMessage('Arquivo não está em UTF-8.', isError: true);
+    }
+  }
+
   Future<void> _toggleTask(Task task, bool completed) async {
     await _taskService.toggleTaskCompleted(
       task: task,
@@ -307,6 +393,32 @@ class _HomeScreenState extends State<HomeScreen> {
             const Text('App Task'),
           ],
         ),
+        actions: [
+          PopupMenuButton<_BackupAction>(
+            tooltip: 'Backup',
+            onSelected: (action) => action == _BackupAction.export
+                ? _exportTasks()
+                : _importTasks(),
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: _BackupAction.export,
+                child: ListTile(
+                  leading: Icon(Icons.upload_file_rounded),
+                  title: Text('Exportar tarefas'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: _BackupAction.import,
+                child: ListTile(
+                  leading: Icon(Icons.download_rounded),
+                  title: Text('Importar tarefas'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: Size.fromHeight(isSearching ? 64 : 168),
           child: Column(
@@ -586,3 +698,5 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+enum _BackupAction { export, import }
