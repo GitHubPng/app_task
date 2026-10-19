@@ -17,15 +17,12 @@ class DatabaseHelper {
 
   Database? _database;
   String? _testDbPath;
-  bool _skipSeed = false;
 
   DatabaseHelper._internal();
 
-  /// Banco em memória/arquivo isolado para testes (sem seed da rotina).
+  /// Banco em memória/arquivo isolado para testes.
   @visibleForTesting
-  DatabaseHelper.test(String dbPath, {bool skipSeed = true})
-      : _testDbPath = dbPath,
-        _skipSeed = skipSeed;
+  DatabaseHelper.test(String dbPath) : _testDbPath = dbPath;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -51,9 +48,6 @@ class DatabaseHelper {
     await _createCoreTables(db);
     await _createOccurrenceTables(db);
     await _createRecurrenceRulesTable(db);
-    if (!_skipSeed) {
-      await _seedWeeklyRoutine(db);
-    }
   }
 
   Future<void> _createCoreTables(Database db) async {
@@ -268,53 +262,6 @@ class DatabaseHelper {
   ) async {
     if (await _columnExists(db, table, column)) return;
     await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
-  }
-
-  Future<void> _seedWeeklyRoutine(Database db) async {
-    final now = DateTime.now().toIso8601String();
-
-    final seeds = <Map<String, dynamic>>[
-      {'title': 'Acordar', 'days': '1,2,3,4,5', 'time': '05:50'},
-      {'title': 'Banho e se vestir', 'days': '1,2,3,4,5', 'time': '06:00'},
-      {'title': 'Café da manhã', 'days': '1,2,3,4,5', 'time': '06:10'},
-      {
-        'title': 'Deslocamento para o trabalho',
-        'days': '1,2,3,4,5',
-        'time': '07:00',
-      },
-      {'title': 'Trabalho', 'days': '1,2,3,4,5', 'time': '08:00'},
-      {'title': 'Curso técnico', 'days': '2,4', 'time': '14:00'},
-      {'title': 'Treino', 'days': '1,3', 'time': '15:00'},
-      {
-        'title': 'Consulta psicológica (online)',
-        'days': '5',
-        'time': '15:30',
-      },
-      {'title': 'Escola', 'days': '1,2,3,4,5', 'time': '19:00'},
-      {'title': 'Dormir', 'days': '1,2,3,4,5', 'time': '22:30'},
-    ];
-
-    for (final seed in seeds) {
-      final taskId = await db.insert('tasks', {
-        'title': seed['title'],
-        'description': null,
-        'due_date': null,
-        'completed': 0,
-        'created_at': now,
-        'is_recurring': 1,
-        'recurring_days': seed['days'],
-        'time': seed['time'],
-        'archived': 0,
-      });
-      await db.insert('task_recurrence_rules', {
-        'task_id': taskId,
-        'effective_from': kLegacyRuleEffectiveFrom,
-        'recurring_days': seed['days'],
-        'title': seed['title'],
-        'description': null,
-        'time': seed['time'],
-      });
-    }
   }
 
   // ─── TASKS ───────────────────────────────────────────────

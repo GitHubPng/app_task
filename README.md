@@ -25,7 +25,7 @@ Gerenciador de rotina semanal e tarefas avulsas — **NexCode Soluções em Tecn
 lib/
  ├── main.dart
  ├── database/
- │     └── database_helper.dart      # Singleton SQLite, migração, seed, CRUD
+ │     └── database_helper.dart      # Singleton SQLite, migração, CRUD
  ├── models/
  │     ├── task.dart                 # Task (+ recorrência / arquivamento)
  │     ├── task_completion.dart      # Conclusão por data (recorrentes)
@@ -98,7 +98,7 @@ Horário (`time`) é opcional para **recorrentes e avulsas**, e ordena a lista d
 
 - O SQLite fica em `apptask.db` no armazenamento interno do app.
 - Instalar um APK **mais novo** (mesmo `applicationId`, `versionCode` maior) preserva o banco; a migração `onUpgrade` só adiciona colunas/tabelas.
-- O seed da rotina roda **somente** na primeira instalação (`onCreate`).
+- O app inicia **sem tarefas pré-cadastradas**; tudo é criado pelo usuário.
 - **Desinstalar** o app ou “Limpar dados” apaga as tarefas — isso é comportamento do Android.
 
 ---
@@ -135,7 +135,6 @@ flutter run
 | RF08 | Estado vazio com mensagem orientativa | ✅ |
 | RF09 | Splash Screen com logo e animação (2 segundos) | ✅ |
 | RF10 | Tela Arquivadas (histórico avulsas concluídas) | ✅ |
-| RF11 | Seed da rotina semanal no primeiro `onCreate` | ✅ |
 
 ---
 
@@ -175,7 +174,7 @@ dependencies:
 
 | Caso | Esperado |
 |------|---------|
-| Abrir app na 1ª vez | Rotina semanal seed aparece no dia certo |
+| Abrir app na 1ª vez | Lista vazia com mensagem orientativa |
 | Selecionar dia | Lista só recorrentes daquele dia + avulsas da data |
 | Concluir recorrente | Feita hoje; no dia seguinte volta desmarcada |
 | Concluir avulsa | Some da home e vai para Arquivadas |
