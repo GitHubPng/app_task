@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:app_task/database/database_helper.dart';
+import 'package:app_task/models/task.dart';
 import 'package:app_task/services/backup_service.dart';
 import 'package:app_task/services/task_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -128,6 +129,77 @@ void main() {
       );
     } finally {
       await legacy.closeForTest();
+    }
+  });
+
+  group('versões do backup', () {
+    Future<Map<String, dynamic>> exportWithRange() async {
+      await TaskService(db: source).createTask(
+        Task(
+          title: 'Trabalho',
+          createdAt: '2026-01-01T00:00:00.000',
+          isRecurring: true,
+          recurringDays: '1,2,3,4,5',
+          time: '08:00',
+          endTime: '15:00',
+          breakStart: '12:00',
+          breakEnd: '13:00',
+        ),
+        [],
+      );
+      return jsonDecode(await BackupService(db: source).exportToJson())
+          as Map<String, dynamic>;
+    }
+
+    test('roundtrip v6 preserva fim e pausa', () async {
+      final map = await exportWithRange();
+      expect(map['dbVersion'], 6);
+      await BackupService(db: target).importFromJson(jsonEncode(map));
+
+      final trabalho = (await loadTaskOnDate(
+        TaskService(db: target),
+        date(2026, 8, 31),
+        'Trabalho',
+      ))!;
+      expect(trabalho.effectiveEndTime, '15:00');
+      expect(trabalho.effectiveBreakStart, '12:00');
+      expect(trabalho.effectiveBreakEnd, '13:00');
+    });
+
+    test('backup v5 (sem colunas de intervalo) importa', () async {
+      final map = await exportWithRange();
+      map['dbVersion'] = 5;
+      for (final rows in (map['data'] as Map<String, dynamic>).values) {
+        for (final row in rows as List) {
+          (row as Map<String, dynamic>)
+            ..remove('end_time')
+            ..remove('break_start')
+            ..remove('break_end');
+        }
+      }
+
+      expect(
+        await BackupService(db: target).importFromJson(jsonEncode(map)),
+        1,
+      );
+      final trabalho = (await loadTaskOnDate(
+        TaskService(db: target),
+        date(2026, 8, 31),
+        'Trabalho',
+      ))!;
+      expect(trabalho.effectiveTime, '08:00');
+      expect(trabalho.effectiveEndTime, isNull);
+    });
+
+    for (final version in [4, 7]) {
+      test('dbVersion $version é recusado', () async {
+        final map = await exportWithRange();
+        map['dbVersion'] = version;
+        await expectLater(
+          BackupService(db: target).importFromJson(jsonEncode(map)),
+          throwsA(isA<BackupFormatException>()),
+        );
+      });
     }
   });
 
