@@ -169,7 +169,7 @@ void main() {
 
       final wed = (await loadTaskOnDate(service, date(2026, 9, 2), 'Treino'))!;
       expect(wed.effectiveDescription, isEmpty);
-      expect(wed.effectiveTime, isEmpty);
+      expect(wed.effectiveTime, isNull);
 
       final fri = (await loadTaskOnDate(service, date(2026, 9, 4), 'Treino'))!;
       expect(fri.effectiveDescription, 'Academia');

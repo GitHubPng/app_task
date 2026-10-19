@@ -1,3 +1,4 @@
+import '../utils/time_range.dart';
 import 'subtask.dart';
 
 class Task {
@@ -18,6 +19,11 @@ class Task {
   /// Horário "HH:mm" para ordenar a lista do dia.
   String? time;
 
+  /// Fim opcional e pausa opcional ("HH:mm", mesmo dia).
+  String? endTime;
+  String? breakStart;
+  String? breakEnd;
+
   // ─── Campos runtime (agenda / ocorrência) ─────────────────
 
   /// Data concreta exibida na agenda (YYYY-MM-DD).
@@ -33,11 +39,17 @@ class Task {
   String? occurrenceTitleOverride;
   String? occurrenceDescriptionOverride;
   String? occurrenceTimeOverride;
+  String? occurrenceEndTimeOverride;
+  String? occurrenceBreakStartOverride;
+  String? occurrenceBreakEndOverride;
 
   /// Campos da regra vigente na [occurrenceDate] (runtime).
   String? ruleTitleForDate;
   String? ruleDescriptionForDate;
   String? ruleTimeForDate;
+  String? ruleEndTimeForDate;
+  String? ruleBreakStartForDate;
+  String? ruleBreakEndForDate;
   String? ruleRecurringDaysForDate;
 
   Task({
@@ -51,15 +63,24 @@ class Task {
     this.isRecurring = false,
     this.recurringDays,
     this.time,
+    this.endTime,
+    this.breakStart,
+    this.breakEnd,
     this.occurrenceDate,
     this.occurrenceId,
     this.isOccurrenceOverride = false,
     this.occurrenceTitleOverride,
     this.occurrenceDescriptionOverride,
     this.occurrenceTimeOverride,
+    this.occurrenceEndTimeOverride,
+    this.occurrenceBreakStartOverride,
+    this.occurrenceBreakEndOverride,
     this.ruleTitleForDate,
     this.ruleDescriptionForDate,
     this.ruleTimeForDate,
+    this.ruleEndTimeForDate,
+    this.ruleBreakStartForDate,
+    this.ruleBreakEndForDate,
     this.ruleRecurringDaysForDate,
   });
 
@@ -71,9 +92,28 @@ class Task {
   String? get effectiveDescription =>
       occurrenceDescriptionOverride ?? ruleDescriptionForDate ?? description;
 
-  /// Horário efetivo: override → regra da data → valor em tasks.
+  /// Horários efetivos: override → regra da data → valor em tasks.
+  /// '' na cadeia (removido nesta data / ausente na regra) vira null.
   String? get effectiveTime =>
-      occurrenceTimeOverride ?? ruleTimeForDate ?? time;
+      _emptyToNull(occurrenceTimeOverride ?? ruleTimeForDate ?? time);
+
+  String? get effectiveEndTime =>
+      _emptyToNull(occurrenceEndTimeOverride ?? ruleEndTimeForDate ?? endTime);
+
+  String? get effectiveBreakStart => _emptyToNull(
+      occurrenceBreakStartOverride ?? ruleBreakStartForDate ?? breakStart);
+
+  String? get effectiveBreakEnd => _emptyToNull(
+      occurrenceBreakEndOverride ?? ruleBreakEndForDate ?? breakEnd);
+
+  static String? _emptyToNull(String? v) => (v == null || v.isEmpty) ? null : v;
+
+  TimeRange get effectiveRange => TimeRange(
+        start: effectiveTime,
+        end: effectiveEndTime,
+        breakStart: effectiveBreakStart,
+        breakEnd: effectiveBreakEnd,
+      );
 
   /// Dias da regra vigente na data exibida (ou fallback em tasks).
   List<int> get displayRecurringDaysList {
@@ -112,6 +152,9 @@ class Task {
       'is_recurring': isRecurring ? 1 : 0,
       'recurring_days': recurringDays,
       'time': time,
+      'end_time': endTime,
+      'break_start': breakStart,
+      'break_end': breakEnd,
     };
   }
 
@@ -127,6 +170,9 @@ class Task {
       isRecurring: (map['is_recurring'] as int? ?? 0) == 1,
       recurringDays: map['recurring_days'] as String?,
       time: map['time'] as String?,
+      endTime: map['end_time'] as String?,
+      breakStart: map['break_start'] as String?,
+      breakEnd: map['break_end'] as String?,
     );
   }
 
@@ -141,6 +187,9 @@ class Task {
     bool? isRecurring,
     String? recurringDays,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
     String? occurrenceDate,
     int? occurrenceId,
     bool? isOccurrenceOverride,
@@ -154,6 +203,8 @@ class Task {
     bool clearDueDate = false,
     bool clearRecurringDays = false,
     bool clearTime = false,
+    bool clearEndTime = false,
+    bool clearBreak = false,
     bool clearOccurrenceOverrides = false,
   }) {
     return Task(
@@ -168,6 +219,9 @@ class Task {
       recurringDays:
           clearRecurringDays ? null : (recurringDays ?? this.recurringDays),
       time: clearTime ? null : (time ?? this.time),
+      endTime: clearEndTime ? null : (endTime ?? this.endTime),
+      breakStart: clearBreak ? null : (breakStart ?? this.breakStart),
+      breakEnd: clearBreak ? null : (breakEnd ?? this.breakEnd),
       occurrenceDate: occurrenceDate ?? this.occurrenceDate,
       occurrenceId: occurrenceId ?? this.occurrenceId,
       isOccurrenceOverride: isOccurrenceOverride ?? this.isOccurrenceOverride,

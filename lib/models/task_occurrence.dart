@@ -9,6 +9,9 @@ class TaskOccurrence {
   String? title;
   String? description;
   String? time;
+  String? endTime;
+  String? breakStart;
+  String? breakEnd;
   bool cancelled;
 
   TaskOccurrence({
@@ -18,6 +21,9 @@ class TaskOccurrence {
     this.title,
     this.description,
     this.time,
+    this.endTime,
+    this.breakStart,
+    this.breakEnd,
     this.cancelled = false,
   });
 
@@ -29,6 +35,9 @@ class TaskOccurrence {
       'title': title,
       'description': description,
       'time': time,
+      'end_time': endTime,
+      'break_start': breakStart,
+      'break_end': breakEnd,
       'cancelled': cancelled ? 1 : 0,
     };
   }
@@ -41,6 +50,9 @@ class TaskOccurrence {
       title: map['title'] as String?,
       description: map['description'] as String?,
       time: map['time'] as String?,
+      endTime: map['end_time'] as String?,
+      breakStart: map['break_start'] as String?,
+      breakEnd: map['break_end'] as String?,
       cancelled: (map['cancelled'] as int? ?? 0) == 1,
     );
   }

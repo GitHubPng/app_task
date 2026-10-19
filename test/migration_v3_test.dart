@@ -77,7 +77,7 @@ void main() {
       final version = Sqflite.firstIntValue(
         await db.rawQuery('PRAGMA user_version'),
       );
-      expect(version, 5);
+      expect(version, 6);
     });
   });
 }
