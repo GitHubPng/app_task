@@ -1,6 +1,7 @@
 import '../database/database_helper.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
+import '../utils/time_range.dart';
 import '../utils/weekday_utils.dart';
 
 class TaskService {
@@ -68,6 +69,9 @@ class TaskService {
         title: task.title,
         description: task.description,
         time: task.time,
+        endTime: task.endTime,
+        breakStart: task.breakStart,
+        breakEnd: task.breakEnd,
       );
     }
 
@@ -94,6 +98,9 @@ class TaskService {
     required String title,
     String? description,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
     List<Subtask>? subtasks,
   }) async {
     final effectiveStr = WeekdayUtils.toDateString(effectiveFrom);
@@ -104,6 +111,9 @@ class TaskService {
       title: title,
       description: description,
       time: time,
+      endTime: endTime,
+      breakStart: breakStart,
+      breakEnd: breakEnd,
     );
 
     final current = await _db.getTaskById(taskId);
@@ -113,9 +123,14 @@ class TaskService {
           title: title,
           description: description,
           time: time,
+          endTime: endTime,
+          breakStart: breakStart,
+          breakEnd: breakEnd,
           recurringDays: recurringDays,
           isRecurring: true,
           clearDueDate: true,
+          clearEndTime: endTime == null,
+          clearBreak: breakStart == null,
         ),
       );
     }
@@ -133,6 +148,9 @@ class TaskService {
     required String title,
     String? description,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
     required List<Subtask> subtasks,
   }) async {
     final taskId = task.id!;
@@ -147,10 +165,15 @@ class TaskService {
         title: title,
         description: description,
         time: time,
+        endTime: endTime,
+        breakStart: breakStart,
+        breakEnd: breakEnd,
         isRecurring: true,
         recurringDays: recurringDays,
         completed: false,
         clearDueDate: true,
+        clearEndTime: endTime == null,
+        clearBreak: breakStart == null,
       ),
     );
 
@@ -178,6 +201,9 @@ class TaskService {
       title: title,
       description: description,
       time: time,
+      endTime: endTime,
+      breakStart: breakStart,
+      breakEnd: breakEnd,
     );
 
     await _db.syncSubtasks(taskId, subtasks, keepCompleted: true);
@@ -190,6 +216,9 @@ class TaskService {
     String? title,
     String? description,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
   }) async {
     final dateStr = WeekdayUtils.toDateString(date);
     await _db.upsertOccurrence(
@@ -198,7 +227,37 @@ class TaskService {
       title: title,
       description: description,
       time: time,
+      endTime: endTime,
+      breakStart: breakStart,
+      breakEnd: breakEnd,
     );
+  }
+
+  /// Tarefas efetivas de cada data em [dates] que conflitam com [range].
+  Future<List<Task>> findConflicts({
+    required TimeRange range,
+    required List<DateTime> dates,
+    int? excludeTaskId,
+  }) async {
+    final conflicts = <Task>[];
+    for (final date in dates) {
+      for (final task in await getTasksForDate(date)) {
+        if (task.id == excludeTaskId) continue;
+        if (task.effectiveRange.conflictsWith(range)) conflicts.add(task);
+      }
+    }
+    return conflicts;
+  }
+
+  /// Datas dos [weekdays] (1=Seg … 7=Dom) na semana de [effectiveFrom].
+  static List<DateTime> datesForRule(
+    DateTime effectiveFrom,
+    List<int> weekdays,
+  ) {
+    final start = WeekdayUtils.weekStart(effectiveFrom);
+    return ([...weekdays]..sort())
+        .map((d) => WeekdayUtils.dateInWeek(start, d))
+        .toList();
   }
 
   Future<void> deleteTask(int id) async {
