@@ -13,7 +13,7 @@ import '../utils/weekday_utils.dart';
 const kLegacyRuleEffectiveFrom = '1970-01-01';
 
 class DatabaseHelper {
-  static const schemaVersion = 6;
+  static const schemaVersion = 7;
 
   static DatabaseHelper instance = DatabaseHelper._internal();
 
@@ -66,7 +66,9 @@ class DatabaseHelper {
         time TEXT,
         end_time TEXT,
         break_start TEXT,
-        break_end TEXT
+        break_end TEXT,
+        reminder_enabled INTEGER NOT NULL DEFAULT 0,
+        reminder_minutes_before INTEGER
       )
     ''');
 
@@ -278,6 +280,21 @@ class DatabaseHelper {
           await _addColumnIfMissing(db, table, column, 'TEXT');
         }
       }
+    }
+
+    if (oldVersion < 7) {
+      await _addColumnIfMissing(
+        db,
+        'tasks',
+        'reminder_enabled',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        'tasks',
+        'reminder_minutes_before',
+        'INTEGER',
+      );
     }
   }
 

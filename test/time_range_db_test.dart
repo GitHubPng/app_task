@@ -32,8 +32,17 @@ void main() {
       final db = await dbHelper.database;
       expect(
         Sqflite.firstIntValue(await db.rawQuery('PRAGMA user_version')),
-        6,
+        7,
       );
+      final taskCols = (await db.rawQuery('PRAGMA table_info(tasks)'))
+          .map((r) => r['name'])
+          .toSet();
+      expect(
+        taskCols,
+        containsAll(['reminder_enabled', 'reminder_minutes_before']),
+      );
+      final rows = await db.query('tasks', columns: ['reminder_enabled']);
+      expect(rows.every((r) => r['reminder_enabled'] == 0), isTrue);
       for (final table in [
         'tasks',
         'task_recurrence_rules',
