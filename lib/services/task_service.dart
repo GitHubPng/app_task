@@ -4,6 +4,7 @@ import '../database/database_helper.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
 import '../utils/time_range.dart';
+import 'notification_service.dart';
 import 'reminder_planner.dart';
 import 'reminder_scheduler.dart';
 import '../utils/weekday_utils.dart';
@@ -272,7 +273,7 @@ class TaskService {
     final planned = planReminders(tasksByDay, current);
 
     try {
-      await _scheduler?.replaceAll(planned);
+      await (_scheduler ?? NotificationService.instance).replaceAll(planned);
     } catch (e) {
       debugPrint('Falha ao agendar lembretes: $e');
     }
