@@ -21,6 +21,17 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+// Assinatura de release: android/key.properties (local) ou gerado pelo CI.
+// Sem o arquivo, cai na chave de debug — o APK NÃO atualiza por cima de
+// um APK assinado com a chave de release.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
@@ -51,9 +62,22 @@ android {
         versionName flutterVersionName
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            release {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
         }
     }
 }

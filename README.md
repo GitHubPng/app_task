@@ -103,6 +103,39 @@ Horário (`time`) é opcional para **recorrentes e avulsas**, e ordena a lista d
 - Instalar um APK **mais novo** (mesmo `applicationId`, `versionCode` maior) preserva o banco; a migração `onUpgrade` só adiciona colunas/tabelas.
 - O app inicia **sem tarefas pré-cadastradas**; tudo é criado pelo usuário.
 - **Desinstalar** o app ou “Limpar dados” apaga as tarefas — isso é comportamento do Android.
+- O APK só atualiza por cima se for assinado com a **mesma chave**. Veja abaixo.
+
+### Assinatura de release
+
+O build de release usa `android/key.properties` (fora do Git). Sem ele, cai na chave de debug,
+que é diferente em cada máquina — e o Android recusa instalar por cima.
+
+**Gerar a chave (uma vez só — guarde o `.jks` e as senhas; perdeu = não atualiza mais):**
+
+```bash
+keytool -genkeypair -v -keystore upload-keystore.jks -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+**Secrets no GitHub** (Settings → Secrets and variables → Actions):
+
+| Secret | Valor |
+|--------|-------|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 upload-keystore.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | senha da keystore |
+| `ANDROID_KEY_ALIAS` | `upload` |
+| `ANDROID_KEY_PASSWORD` | senha da chave |
+
+Sem os secrets, o workflow falha de propósito em vez de gerar um APK que não atualiza.
+
+**Build local assinado:** copie o `.jks` para `android/app/` e crie `android/key.properties`:
+
+```properties
+storeFile=app/upload-keystore.jks
+storePassword=...
+keyAlias=upload
+keyPassword=...
+```
 
 ---
 
