@@ -48,7 +48,7 @@ lib/
 
 ---
 
-## Banco de Dados (apptask.db, versão 5)
+## Banco de Dados (apptask.db, versão 6)
 
 ### Tabela `tasks`
 ```sql
@@ -61,7 +61,10 @@ CREATE TABLE tasks(
     created_at TEXT NOT NULL,
     is_recurring INTEGER DEFAULT 0,
     recurring_days TEXT,          -- ex: "1,3,5" (1=Seg ... 7=Dom)
-    time TEXT                     -- ex: "08:00"
+    time TEXT,                    -- início, ex: "08:00"
+    end_time TEXT,                -- fim opcional, ex: "15:00"
+    break_start TEXT,             -- pausa opcional, ex: "12:00"
+    break_end TEXT                --                 ex: "13:00"
 );
 ```
 
@@ -96,6 +99,9 @@ Outras tabelas (ver `_onCreate` em `database_helper.dart`):
 Recorrentes usam `task_completions` por data (reset diário natural). Avulsas usam `tasks.completed` e ficam riscadas na própria data.
 
 Horário (`time`) é opcional para **recorrentes e avulsas**, e ordena a lista do dia.
+Fim (`end_time`) e pausa (`break_start`/`break_end`) são opcionais e também existem em
+`task_recurrence_rules` (por versão da rotina) e `task_occurrences` (ajuste de um dia;
+`''` = removido naquele dia).
 
 ### Atualizar o app sem perder dados
 
@@ -112,7 +118,7 @@ Menu ⋮ da home:
 - **Importar tarefas** — **substitui** todas as tarefas atuais pelas do arquivo (pede confirmação).
   O arquivo é validado antes; se for inválido, nada é alterado.
 
-O backup só importa em app com a mesma versão de banco (hoje, 5).
+O backup importa arquivos das versões de banco 5 até a atual (hoje, 6); versões mais novas que o app são recusadas.
 
 ### Assinatura de release
 
@@ -179,6 +185,9 @@ flutter run
 | RF07 | Gerenciar subtarefas (add, concluir, excluir) | ✅ |
 | RF08 | Estado vazio com mensagem orientativa | ✅ |
 | RF09 | Splash Screen com logo e animação (2 segundos) | ✅ |
+| RF12 | Intervalo de horário (início–fim + pausa opcional) | ✅ |
+| RF13 | Destaque "Agora" / "Pausa" na tarefa em andamento | ✅ |
+| RF14 | Exportar / importar tarefas (JSON) | ✅ |
 
 ---
 
@@ -202,6 +211,9 @@ flutter run
 | RN-NOVA-06 | Excluir recorrente: só a ocorrência ou a rotina inteira | Rotina inteira limpa histórico (CASCADE) |
 | RN-NOVA-07 | Busca é só consulta | Sem concluir/excluir nos resultados |
 | RN-NOVA-08 | Editar rotina preserva etapas mantidas | `syncSubtasks` mantém ids e histórico |
+| RN-NOVA-09 | Fim depois do início, no mesmo dia; pausa dentro do período | `TimeRange.validate()` |
+| RN-NOVA-10 | Tarefa sem fim nunca fica "Agora" | `TimeRange.statusAt()` |
+| RN-NOVA-11 | Sobreposição só avisa; dentro da pausa não conflita | `TaskService.findConflicts()` |
 
 ---
 

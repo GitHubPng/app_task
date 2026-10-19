@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../utils/app_theme.dart';
+import '../utils/time_range.dart';
 import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import 'subtask_widget.dart';
@@ -12,6 +13,9 @@ class TaskTile extends StatelessWidget {
   final ValueChanged<bool>? onToggleCompleted;
   final ValueChanged<int>? onToggleSubtask;
 
+  /// Em andamento agora / em pausa (só no dia de hoje).
+  final TimeStatus status;
+
   const TaskTile({
     super.key,
     required this.task,
@@ -19,6 +23,7 @@ class TaskTile extends StatelessWidget {
     this.onDelete,
     this.onToggleCompleted,
     this.onToggleSubtask,
+    this.status = TimeStatus.none,
   });
 
   @override
@@ -33,9 +38,12 @@ class TaskTile extends StatelessWidget {
         color: AppTheme.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: task.completed
-              ? AppTheme.border
-              : AppTheme.primary.withOpacity(0.12),
+          color: status != TimeStatus.none
+              ? AppTheme.primary
+              : task.completed
+                  ? AppTheme.border
+                  : AppTheme.primary.withOpacity(0.12),
+          width: status != TimeStatus.none ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
@@ -179,8 +187,12 @@ class TaskTile extends StatelessWidget {
   Widget _buildMetaRow() {
     final chips = <Widget>[];
 
-    final time = task.effectiveTime;
-    if (time != null && time.isNotEmpty) {
+    if (status != TimeStatus.none) {
+      chips.add(_statusBadge());
+    }
+
+    final time = task.effectiveRange.label;
+    if (time != null) {
       chips.add(_metaChip(Icons.schedule_rounded, time));
     }
 
@@ -210,6 +222,25 @@ class TaskTile extends StatelessWidget {
       spacing: 8,
       runSpacing: 4,
       children: chips,
+    );
+  }
+
+  Widget _statusBadge() {
+    final paused = status == TimeStatus.paused;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: paused ? AppTheme.textSecondary : AppTheme.primary,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        paused ? 'Pausa' : 'Agora',
+        style: const TextStyle(
+          fontSize: 11,
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 

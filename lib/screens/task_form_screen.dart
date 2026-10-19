@@ -4,6 +4,7 @@ import '../models/task.dart';
 import '../models/subtask.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/time_range.dart';
 import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import '../widgets/subtask_widget.dart';
@@ -42,6 +43,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   final Set<int> _selectedDays = {};
   String? _selectedTime;
+  String? _selectedEndTime;
+  String? _selectedBreakStart;
+  String? _selectedBreakEnd;
+  bool _breakOpen = false;
   String? _selectedDate;
   String? _ruleEffectiveFrom;
   List<Subtask> _subtasks = [];
@@ -67,9 +72,15 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           : (t.description ?? '');
       _isRecurring = t.isRecurring || _isRuleEdit;
       _selectedDate = t.dueDate;
-      final time = _isOccurrenceEdit ? t.effectiveTime : t.time;
-      // '' = horário removido na ocorrência; no formulário é "sem horário".
-      _selectedTime = (time == null || time.isEmpty) ? null : time;
+      // Valores efetivos já normalizam '' (removido) para null.
+      _selectedTime = _isOccurrenceEdit ? t.effectiveTime : _orNull(t.time);
+      _selectedEndTime =
+          _isOccurrenceEdit ? t.effectiveEndTime : _orNull(t.endTime);
+      _selectedBreakStart =
+          _isOccurrenceEdit ? t.effectiveBreakStart : _orNull(t.breakStart);
+      _selectedBreakEnd =
+          _isOccurrenceEdit ? t.effectiveBreakEnd : _orNull(t.breakEnd);
+      _breakOpen = _selectedBreakStart != null || _selectedBreakEnd != null;
       _selectedDays.addAll(
         _isOccurrenceEdit || _isRuleEdit
             ? t.displayRecurringDaysList
@@ -154,15 +165,13 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     }
   }
 
-  Future<void> _pickTime() async {
-    TimeOfDay initial = TimeOfDay.now();
-    if (_selectedTime != null && _selectedTime!.contains(':')) {
-      final parts = _selectedTime!.split(':');
-      final h = int.tryParse(parts[0]);
-      final m = int.tryParse(parts[1]);
-      if (h != null && m != null) {
-        initial = TimeOfDay(hour: h, minute: m);
-      }
+  static String? _orNull(String? v) => (v == null || v.isEmpty) ? null : v;
+
+  Future<String?> _pickTime(String? current) async {
+    var initial = TimeOfDay.now();
+    final minutes = TimeRange.toMinutes(current);
+    if (minutes != null) {
+      initial = TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60);
     }
 
     final picked = await showTimePicker(
@@ -178,13 +187,103 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         child: child!,
       ),
     );
+    if (picked == null) return null;
+    return '${picked.hour.toString().padLeft(2, '0')}:'
+        '${picked.minute.toString().padLeft(2, '0')}';
+  }
 
-    if (picked != null) {
-      setState(() {
-        _selectedTime =
-            '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+  // Limpar início limpa fim e pausa; limpar fim limpa pausa.
+  void _clearStart() => setState(() {
+        _selectedTime = null;
+        _selectedEndTime = null;
+        _resetBreak();
       });
-    }
+
+  void _clearEnd() => setState(() {
+        _selectedEndTime = null;
+        _resetBreak();
+      });
+
+  void _clearBreak() => setState(_resetBreak);
+
+  void _resetBreak() {
+    _selectedBreakStart = null;
+    _selectedBreakEnd = null;
+    _breakOpen = false;
+  }
+
+  TimeRange get _range => TimeRange(
+        start: _selectedTime,
+        end: _selectedEndTime,
+        breakStart: _selectedBreakStart,
+        breakEnd: _selectedBreakEnd,
+      );
+
+  /// Datas onde a tarefa salva vai aparecer, para checar sobreposição.
+  List<DateTime> _conflictDates() {
+    if (_isOccurrenceEdit) return [DateTime.parse(widget.occurrenceDate!)];
+    if (!_isRecurring) return [DateTime.parse(_selectedDate!)];
+    final from = _isRuleEdit
+        ? DateTime.parse(_ruleEffectiveFrom!)
+        : (!_wasRecurring && _isEditMode && _selectedDate != null)
+            ? DateTime.parse(_selectedDate!)
+            : DateTime.now();
+    return TaskService.datesForRule(from, _selectedDays.toList());
+  }
+
+  /// true = pode salvar (sem conflito ou usuário confirmou).
+  Future<bool> _confirmConflicts() async {
+    final conflicts = await _taskService.findConflicts(
+      range: _range,
+      dates: _conflictDates(),
+      excludeTaskId: widget.task?.id,
+    );
+    if (conflicts.isEmpty || !mounted) return true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Conflito de horário',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Este horário se sobrepõe a:',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            ...conflicts.map(
+              (t) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '• ${t.effectiveTitle} · ${t.effectiveRange.label} · '
+                  '${Validators.formatDateDisplay(t.occurrenceDate)}',
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Voltar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Salvar mesmo assim',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
   }
 
   void _addSubtask() {
@@ -220,6 +319,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       return;
     }
 
+    final rangeError = _range.validate();
+    if (rangeError != null) {
+      _showSnack(rangeError, isError: true);
+      return;
+    }
+
     // RN02: data não retroativa (só avulsas novas).
     if (!_isRecurring &&
         !_isEditMode &&
@@ -232,6 +337,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     setState(() => _isSaving = true);
 
     try {
+      if (!await _confirmConflicts()) return;
       final now = DateTime.now().toIso8601String();
       final recurringDays = _isRecurring
           ? WeekdayUtils.daysToStorage(_selectedDays.toList())
@@ -257,6 +363,18 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
               _selectedTime ?? '',
               t.ruleTimeForDate ?? t.time,
             ),
+            endTime: _overrideOrNull(
+              _selectedEndTime ?? '',
+              t.ruleEndTimeForDate ?? t.endTime,
+            ),
+            breakStart: _overrideOrNull(
+              _selectedBreakStart ?? '',
+              t.ruleBreakStartForDate ?? t.breakStart,
+            ),
+            breakEnd: _overrideOrNull(
+              _selectedBreakEnd ?? '',
+              t.ruleBreakEndForDate ?? t.breakEnd,
+            ),
           );
           if (mounted) {
             _showSnack('Ocorrência atualizada!');
@@ -272,6 +390,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ? null
                 : _descriptionController.text.trim(),
             time: _selectedTime,
+            endTime: _selectedEndTime,
+            breakStart: _selectedBreakStart,
+            breakEnd: _selectedBreakEnd,
             subtasks: _subtasks,
           );
           if (mounted) {
@@ -290,6 +411,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ? null
                 : _descriptionController.text.trim(),
             time: _selectedTime,
+            endTime: _selectedEndTime,
+            breakStart: _selectedBreakStart,
+            breakEnd: _selectedBreakEnd,
             subtasks: _subtasks,
           );
           if (mounted) {
@@ -309,6 +433,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             isRecurring: _isRecurring,
             recurringDays: recurringDays,
             time: _selectedTime,
+            endTime: _selectedEndTime,
+            breakStart: _selectedBreakStart,
+            breakEnd: _selectedBreakEnd,
           );
           await _taskService.updateTask(toSave, _subtasks);
           if (mounted) {
@@ -327,6 +454,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           isRecurring: _isRecurring,
           recurringDays: recurringDays,
           time: _selectedTime,
+          endTime: _selectedEndTime,
+          breakStart: _selectedBreakStart,
+          breakEnd: _selectedBreakEnd,
         );
         await _taskService.createTask(task, _subtasks);
         if (mounted) {
@@ -587,35 +717,71 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 ),
               ],
 
-              // Horário para recorrentes e avulsas — mantém a lista do dia ordenada.
+              // Horário: início; fim após início; pausa após fim.
               const SizedBox(height: 20),
               _label('Horário'),
               const SizedBox(height: 8),
-              GestureDetector(
-                onTap: _pickTime,
-                child: AbsorbPointer(
-                  child: TextFormField(
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      hintText: 'Opcional — ordena a lista do dia',
-                      prefixIcon: const Icon(
-                        Icons.schedule_rounded,
-                        color: AppTheme.primary,
-                      ),
-                      suffixIcon: _selectedTime != null
-                          ? IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setState(() => _selectedTime = null),
-                            )
-                          : null,
-                    ),
-                    controller: TextEditingController(
-                      text: _selectedTime ?? '',
-                    ),
+              _timeField(
+                hint: 'Início — opcional, ordena a lista do dia',
+                value: _selectedTime,
+                icon: Icons.schedule_rounded,
+                onPicked: (v) => setState(() => _selectedTime = v),
+                onClear: _clearStart,
+              ),
+              if (_selectedTime != null) ...[
+                const SizedBox(height: 8),
+                _timeField(
+                  hint: 'Fim (opcional)',
+                  value: _selectedEndTime,
+                  icon: Icons.flag_outlined,
+                  onPicked: (v) => setState(() => _selectedEndTime = v),
+                  onClear: _clearEnd,
+                ),
+              ],
+              if (_selectedEndTime != null && !_breakOpen)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _breakOpen = true),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Adicionar pausa'),
                   ),
                 ),
-              ),
+              if (_selectedEndTime != null && _breakOpen) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _label('Pausa'),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: _clearBreak,
+                      child: const Text('Remover pausa'),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _timeField(
+                        hint: 'De',
+                        value: _selectedBreakStart,
+                        icon: Icons.pause_circle_outline,
+                        onPicked: (v) =>
+                            setState(() => _selectedBreakStart = v),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _timeField(
+                        hint: 'Até',
+                        value: _selectedBreakEnd,
+                        icon: Icons.play_circle_outline,
+                        onPicked: (v) => setState(() => _selectedBreakEnd = v),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
 
               if (!_isOccurrenceEdit) ...[
                 const SizedBox(height: 28),
@@ -716,6 +882,45 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Campo de horário: toque abre o seletor; X (fora do AbsorbPointer,
+  /// para receber o toque) limpa.
+  Widget _timeField({
+    required String hint,
+    required String? value,
+    required IconData icon,
+    required ValueChanged<String> onPicked,
+    VoidCallback? onClear,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () async {
+              final picked = await _pickTime(value);
+              if (picked != null) onPicked(picked);
+            },
+            child: AbsorbPointer(
+              child: TextFormField(
+                readOnly: true,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  prefixIcon: Icon(icon, color: AppTheme.primary),
+                ),
+                controller: TextEditingController(text: value ?? ''),
+              ),
+            ),
+          ),
+        ),
+        if (value != null && onClear != null)
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: 'Limpar',
+            onPressed: onClear,
+          ),
+      ],
     );
   }
 

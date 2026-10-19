@@ -168,4 +168,16 @@ void main() {
       expect(trabalho.conflictsWith(const TimeRange()), isFalse);
     });
   });
+
+  group('label', () {
+    test('formata ponto, período e pausa', () {
+      expect(const TimeRange().label, isNull);
+      expect(const TimeRange(start: '05:50').label, '05:50');
+      expect(
+        const TimeRange(start: '08:00', end: '15:00').label,
+        '08:00–15:00',
+      );
+      expect(trabalho.label, '08:00–15:00 · pausa 12:00–13:00');
+    });
+  });
 }

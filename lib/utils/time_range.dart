@@ -13,6 +13,17 @@ class TimeRange {
 
   bool get hasEnd => toMinutes(end) != null;
 
+  /// "05:50", "08:00–15:00" ou "08:00–15:00 · pausa 12:00–13:00".
+  String? get label {
+    if (toMinutes(start) == null) return null;
+    if (!hasEnd) return start;
+    final period = '$start–$end';
+    if (toMinutes(breakStart) == null || toMinutes(breakEnd) == null) {
+      return period;
+    }
+    return '$period · pausa $breakStart–$breakEnd';
+  }
+
   /// "HH:mm" → minutos desde 00:00; nulo, vazio ou inválido → null.
   static int? toMinutes(String? hhmm) {
     if (hhmm == null) return null;

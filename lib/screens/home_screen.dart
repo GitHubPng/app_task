@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +8,7 @@ import '../models/task.dart';
 import '../services/backup_service.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/time_range.dart';
 import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import '../widgets/empty_state.dart';
@@ -23,6 +25,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _taskService = TaskService();
   final _backupService = BackupService();
+
+  /// Recalcula "Agora"/"Pausa" a cada minuto.
+  Timer? _clock;
   final _searchController = TextEditingController();
 
   List<Task> _tasks = [];
@@ -45,6 +50,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedWeekStart = WeekdayUtils.weekStart(now);
     _selectedWeekday = now.weekday;
     _loadTasks();
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && _isSelectedDateToday) setState(() {});
+    });
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
       _loadTasks(query: _searchController.text);
@@ -53,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _clock?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -155,6 +164,17 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (result == true) _loadTasks(query: _searchQuery);
+  }
+
+  bool get _isSelectedDateToday =>
+      WeekdayUtils.toDateString(_selectedDate) == WeekdayUtils.todayString();
+
+  TimeStatus _statusOf(Task task) {
+    if (_searchQuery.isNotEmpty || !_isSelectedDateToday) {
+      return TimeStatus.none;
+    }
+    final now = DateTime.now();
+    return task.effectiveRange.statusAt(now.hour * 60 + now.minute);
   }
 
   /// Conclusão só até hoje — evita marcar a rotina de semanas futuras.
@@ -499,6 +519,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 canAct && _canCompleteSelectedDate;
                             return TaskTile(
                               task: task,
+                              status: _statusOf(task),
                               onEdit: () => _openForm(task: task),
                               onDelete:
                                   canAct ? () => _confirmDelete(task) : null,
