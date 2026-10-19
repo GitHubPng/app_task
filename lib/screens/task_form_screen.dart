@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/task_form_mode.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
+import '../services/notification_service.dart';
+import '../services/reminder_planner.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/time_range.dart';
@@ -47,6 +49,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   String? _selectedBreakStart;
   String? _selectedBreakEnd;
   bool _breakOpen = false;
+  bool _reminderEnabled = false;
+  int _reminderMinutes = kDefaultReminderMinutes;
   String? _selectedDate;
   String? _ruleEffectiveFrom;
   List<Subtask> _subtasks = [];
@@ -81,6 +85,12 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       _selectedBreakEnd =
           _isOccurrenceEdit ? t.effectiveBreakEnd : _orNull(t.breakEnd);
       _breakOpen = _selectedBreakStart != null || _selectedBreakEnd != null;
+      _reminderEnabled = t.reminderEnabled;
+      // Valor fora das opções (ex.: backup editado) quebraria o dropdown.
+      final minutes = t.reminderMinutesBefore;
+      _reminderMinutes = kReminderOptions.contains(minutes)
+          ? minutes!
+          : kDefaultReminderMinutes;
       _selectedDays.addAll(
         _isOccurrenceEdit || _isRuleEdit
             ? t.displayRecurringDaysList
@@ -196,8 +206,38 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   void _clearStart() => setState(() {
         _selectedTime = null;
         _selectedEndTime = null;
+        _reminderEnabled = false;
         _resetBreak();
       });
+
+  Future<void> _toggleReminder(bool enabled) async {
+    if (!enabled) {
+      setState(() => _reminderEnabled = false);
+      return;
+    }
+    setState(() => _reminderEnabled = true);
+    var granted = false;
+    try {
+      granted = await NotificationService.instance.requestPermission();
+    } catch (_) {}
+    if (!granted && mounted) {
+      setState(() => _reminderEnabled = false);
+      _showSnack(
+        'Permita notificações nas configurações do Android para receber '
+        'lembretes.',
+        isError: true,
+      );
+    }
+  }
+
+  // Lembrete só faz sentido com início definido.
+  bool get _saveReminder => _reminderEnabled && _selectedTime != null;
+
+  static String _reminderLabel(int minutes) => switch (minutes) {
+        0 => 'Na hora',
+        60 => '1 h antes',
+        _ => '$minutes min antes',
+      };
 
   void _clearEnd() => setState(() {
         _selectedEndTime = null;
@@ -393,6 +433,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             endTime: _selectedEndTime,
             breakStart: _selectedBreakStart,
             breakEnd: _selectedBreakEnd,
+            reminderEnabled: _saveReminder,
+            reminderMinutesBefore: _reminderMinutes,
             subtasks: _subtasks,
           );
           if (mounted) {
@@ -414,6 +456,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             endTime: _selectedEndTime,
             breakStart: _selectedBreakStart,
             breakEnd: _selectedBreakEnd,
+            reminderEnabled: _saveReminder,
+            reminderMinutesBefore: _reminderMinutes,
             subtasks: _subtasks,
           );
           if (mounted) {
@@ -436,6 +480,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             endTime: _selectedEndTime,
             breakStart: _selectedBreakStart,
             breakEnd: _selectedBreakEnd,
+            reminderEnabled: _saveReminder,
+            reminderMinutesBefore: _reminderMinutes,
           );
           await _taskService.updateTask(toSave, _subtasks);
           if (mounted) {
@@ -457,6 +503,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           endTime: _selectedEndTime,
           breakStart: _selectedBreakStart,
           breakEnd: _selectedBreakEnd,
+          reminderEnabled: _saveReminder,
+          reminderMinutesBefore: _reminderMinutes,
         );
         await _taskService.createTask(task, _subtasks);
         if (mounted) {
@@ -781,6 +829,41 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                     ),
                   ],
                 ),
+              ],
+
+              // Lembrete: por tarefa (não por ocorrência), exige início.
+              if (!_isOccurrenceEdit && _selectedTime != null) ...[
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Lembrete'),
+                  secondary: const Icon(
+                    Icons.notifications_active_outlined,
+                    color: AppTheme.primary,
+                  ),
+                  value: _reminderEnabled,
+                  onChanged: _toggleReminder,
+                ),
+                if (_reminderEnabled)
+                  DropdownButtonFormField<int>(
+                    value: _reminderMinutes,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(
+                        Icons.timer_outlined,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                    items: [
+                      for (final m in kReminderOptions)
+                        DropdownMenuItem(
+                          value: m,
+                          child: Text(_reminderLabel(m)),
+                        ),
+                    ],
+                    onChanged: (m) {
+                      if (m != null) setState(() => _reminderMinutes = m);
+                    },
+                  ),
               ],
 
               if (!_isOccurrenceEdit) ...[

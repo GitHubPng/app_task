@@ -48,7 +48,7 @@ lib/
 
 ---
 
-## Banco de Dados (apptask.db, versão 6)
+## Banco de Dados (apptask.db, versão 7)
 
 ### Tabela `tasks`
 ```sql
@@ -64,7 +64,9 @@ CREATE TABLE tasks(
     time TEXT,                    -- início, ex: "08:00"
     end_time TEXT,                -- fim opcional, ex: "15:00"
     break_start TEXT,             -- pausa opcional, ex: "12:00"
-    break_end TEXT                --                 ex: "13:00"
+    break_end TEXT,               --                 ex: "13:00"
+    reminder_enabled INTEGER NOT NULL DEFAULT 0,
+    reminder_minutes_before INTEGER -- 0, 5, 15, 30 ou 60
 );
 ```
 
@@ -111,6 +113,16 @@ Fim (`end_time`) e pausa (`break_start`/`break_end`) são opcionais e também ex
 - **Desinstalar** o app ou “Limpar dados” apaga as tarefas — isso é comportamento do Android.
 - O APK só atualiza por cima se for assinado com a **mesma chave**. Veja abaixo.
 
+### Lembretes
+
+- Ligue em cada tarefa (formulário → **Lembrete**); o app pede permissão de notificação na primeira vez.
+- Os avisos dos próximos **14 dias** são recalculados ao abrir o app, a cada mudança e ao religar o celular.
+  Sem abrir o app por 14 dias, os avisos acabam.
+- Não avisa em ocorrência cancelada, tarefa já concluída ou horário que já passou.
+- Se um aviso não chegar (comum em Xiaomi/Samsung): Configurações → Apps → App Task → Bateria →
+  **Sem restrições** / remover da otimização de bateria.
+- Usa `USE_EXACT_ALARM`, aceito para apps instalados fora da Play Store; publicar na loja exigiria revisão.
+
 ### Backup (exportar / importar)
 
 Menu ⋮ da home:
@@ -118,7 +130,7 @@ Menu ⋮ da home:
 - **Importar tarefas** — **substitui** todas as tarefas atuais pelas do arquivo (pede confirmação).
   O arquivo é validado antes; se for inválido, nada é alterado.
 
-O backup importa arquivos das versões de banco 5 até a atual (hoje, 6); versões mais novas que o app são recusadas.
+O backup importa arquivos das versões de banco 5 até a atual (hoje, 7); versões mais novas que o app são recusadas.
 
 ### Assinatura de release
 
@@ -188,6 +200,8 @@ flutter run
 | RF12 | Intervalo de horário (início–fim + pausa opcional) | ✅ |
 | RF13 | Destaque "Agora" / "Pausa" na tarefa em andamento | ✅ |
 | RF14 | Exportar / importar tarefas (JSON) | ✅ |
+| RF15 | Lembrete por tarefa (na hora a 1 h antes) | ✅ |
+| RF16 | "Próximo aviso" na home | ✅ |
 
 ---
 

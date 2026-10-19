@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -41,17 +42,26 @@ class NotificationService implements ReminderScheduler {
   Future<void> replaceAll(List<PlannedReminder> reminders) async {
     await _plugin.cancelAll();
     for (final r in reminders) {
-      await _plugin.zonedSchedule(
-        r.id,
-        r.title,
-        r.body,
-        // Instante absoluto: a conversão para UTC usa o fuso do aparelho.
-        tz.TZDateTime.from(r.fireAt.toUtc(), tz.UTC),
-        _details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-      );
+      try {
+        await _schedule(r, AndroidScheduleMode.exactAllowWhileIdle);
+      } on PlatformException {
+        // Sem permissão de alarme exato: aviso aproximado em vez de nenhum.
+        await _schedule(r, AndroidScheduleMode.inexactAllowWhileIdle);
+      }
     }
+  }
+
+  Future<void> _schedule(PlannedReminder r, AndroidScheduleMode mode) {
+    return _plugin.zonedSchedule(
+      r.id,
+      r.title,
+      r.body,
+      // Instante absoluto: a conversão para UTC usa o fuso do aparelho.
+      tz.TZDateTime.from(r.fireAt.toUtc(), tz.UTC),
+      _details,
+      androidScheduleMode: mode,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
   }
 }

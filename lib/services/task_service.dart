@@ -112,6 +112,8 @@ class TaskService {
     String? endTime,
     String? breakStart,
     String? breakEnd,
+    bool? reminderEnabled,
+    int? reminderMinutesBefore,
     List<Subtask>? subtasks,
   }) async {
     final effectiveStr = WeekdayUtils.toDateString(effectiveFrom);
@@ -142,6 +144,8 @@ class TaskService {
           clearDueDate: true,
           clearEndTime: endTime == null,
           clearBreak: breakStart == null,
+          reminderEnabled: reminderEnabled,
+          reminderMinutesBefore: reminderMinutesBefore,
         ),
       );
     }
@@ -162,6 +166,8 @@ class TaskService {
     String? endTime,
     String? breakStart,
     String? breakEnd,
+    bool? reminderEnabled,
+    int? reminderMinutesBefore,
     required List<Subtask> subtasks,
   }) async {
     final taskId = task.id!;
@@ -185,6 +191,8 @@ class TaskService {
         clearDueDate: true,
         clearEndTime: endTime == null,
         clearBreak: breakStart == null,
+        reminderEnabled: reminderEnabled,
+        reminderMinutesBefore: reminderMinutesBefore,
       ),
     );
 
