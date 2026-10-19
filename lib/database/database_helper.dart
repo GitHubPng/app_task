@@ -13,19 +13,18 @@ import '../utils/weekday_utils.dart';
 const kLegacyRuleEffectiveFrom = '1970-01-01';
 
 class DatabaseHelper {
+  static const schemaVersion = 5;
+
   static DatabaseHelper instance = DatabaseHelper._internal();
 
   Database? _database;
   String? _testDbPath;
-  bool _skipSeed = false;
 
   DatabaseHelper._internal();
 
-  /// Banco em memória/arquivo isolado para testes (sem seed da rotina).
+  /// Banco em memória/arquivo isolado para testes.
   @visibleForTesting
-  DatabaseHelper.test(String dbPath, {bool skipSeed = true})
-      : _testDbPath = dbPath,
-        _skipSeed = skipSeed;
+  DatabaseHelper.test(String dbPath) : _testDbPath = dbPath;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -38,7 +37,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: schemaVersion,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -51,9 +50,6 @@ class DatabaseHelper {
     await _createCoreTables(db);
     await _createOccurrenceTables(db);
     await _createRecurrenceRulesTable(db);
-    if (!_skipSeed) {
-      await _seedWeeklyRoutine(db);
-    }
   }
 
   Future<void> _createCoreTables(Database db) async {
@@ -67,8 +63,7 @@ class DatabaseHelper {
         created_at TEXT NOT NULL,
         is_recurring INTEGER DEFAULT 0,
         recurring_days TEXT,
-        time TEXT,
-        archived INTEGER DEFAULT 0
+        time TEXT
       )
     ''');
 
@@ -245,6 +240,22 @@ class DatabaseHelper {
         });
       }
     }
+
+    if (oldVersion < 5) {
+      // Avulsa passa a exigir data: sem data → data de criação.
+      await db.execute('''
+        UPDATE tasks
+        SET due_date = substr(created_at, 1, 10)
+        WHERE is_recurring = 0 AND (due_date IS NULL OR due_date = '')
+      ''');
+
+      // Arquivamento removido: arquivadas voltam ao dia como concluídas.
+      await db.execute('''
+        UPDATE tasks
+        SET archived = 0, completed = 1
+        WHERE archived = 1
+      ''');
+    }
   }
 
   Future<bool> _tableExists(Database db, String table) async {
@@ -270,53 +281,6 @@ class DatabaseHelper {
     await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
-  Future<void> _seedWeeklyRoutine(Database db) async {
-    final now = DateTime.now().toIso8601String();
-
-    final seeds = <Map<String, dynamic>>[
-      {'title': 'Acordar', 'days': '1,2,3,4,5', 'time': '05:50'},
-      {'title': 'Banho e se vestir', 'days': '1,2,3,4,5', 'time': '06:00'},
-      {'title': 'Café da manhã', 'days': '1,2,3,4,5', 'time': '06:10'},
-      {
-        'title': 'Deslocamento para o trabalho',
-        'days': '1,2,3,4,5',
-        'time': '07:00',
-      },
-      {'title': 'Trabalho', 'days': '1,2,3,4,5', 'time': '08:00'},
-      {'title': 'Curso técnico', 'days': '2,4', 'time': '14:00'},
-      {'title': 'Treino', 'days': '1,3', 'time': '15:00'},
-      {
-        'title': 'Consulta psicológica (online)',
-        'days': '5',
-        'time': '15:30',
-      },
-      {'title': 'Escola', 'days': '1,2,3,4,5', 'time': '19:00'},
-      {'title': 'Dormir', 'days': '1,2,3,4,5', 'time': '22:30'},
-    ];
-
-    for (final seed in seeds) {
-      final taskId = await db.insert('tasks', {
-        'title': seed['title'],
-        'description': null,
-        'due_date': null,
-        'completed': 0,
-        'created_at': now,
-        'is_recurring': 1,
-        'recurring_days': seed['days'],
-        'time': seed['time'],
-        'archived': 0,
-      });
-      await db.insert('task_recurrence_rules', {
-        'task_id': taskId,
-        'effective_from': kLegacyRuleEffectiveFrom,
-        'recurring_days': seed['days'],
-        'title': seed['title'],
-        'description': null,
-        'time': seed['time'],
-      });
-    }
-  }
-
   // ─── TASKS ───────────────────────────────────────────────
 
   Future<int> insertTask(Task task) async {
@@ -335,14 +299,13 @@ class DatabaseHelper {
     if (searchQuery != null && searchQuery.isNotEmpty) {
       maps = await db.query(
         'tasks',
-        where: 'archived = 0 AND title LIKE ?',
+        where: 'title LIKE ?',
         whereArgs: ['%$searchQuery%'],
         orderBy: 'completed ASC, created_at DESC',
       );
     } else {
       maps = await db.query(
         'tasks',
-        where: 'archived = 0',
         orderBy: 'completed ASC, created_at DESC',
       );
     }
@@ -360,12 +323,12 @@ class DatabaseHelper {
 
     final recurringMaps = await db.query(
       'tasks',
-      where: 'archived = 0 AND is_recurring = 1',
+      where: 'is_recurring = 1',
     );
 
     final oneOffMaps = await db.query(
       'tasks',
-      where: 'archived = 0 AND is_recurring = 0 AND due_date = ?',
+      where: 'is_recurring = 0 AND due_date = ?',
       whereArgs: [dateStr],
     );
 
@@ -380,16 +343,6 @@ class DatabaseHelper {
 
     tasks.sort(_compareByEffectiveTimeThenCreated);
     return tasks;
-  }
-
-  Future<List<Task>> getArchivedTasks() async {
-    final db = await database;
-    final maps = await db.query(
-      'tasks',
-      where: 'archived = 1',
-      orderBy: 'created_at DESC',
-    );
-    return _hydrateTasksForDate(maps, WeekdayUtils.todayString());
   }
 
   Future<Task?> getTaskById(int id) async {
@@ -417,7 +370,7 @@ class DatabaseHelper {
     return await db.delete('tasks', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Conclusão de tarefa avulsa: atualiza completed sem arquivar automaticamente.
+  /// Conclusão de tarefa avulsa: fica riscada na própria data.
   Future<int> toggleOneOffCompleted(int id, bool completed) async {
     final db = await database;
     return await db.update(
@@ -532,6 +485,14 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     final existing = await getOccurrence(taskId, dateStr);
+
+    // Sem override e sem linha: nada a gravar (linha vazia viraria âncora).
+    if (existing == null &&
+        title == null &&
+        description == null &&
+        time == null) {
+      return;
+    }
 
     if (existing != null) {
       await db.update(
@@ -708,9 +669,51 @@ class DatabaseHelper {
     return await db.delete('subtasks', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> deleteSubtasksByTask(int taskId) async {
+  /// Sincroniza subtarefas preservando ids das que continuam na lista,
+  /// para não apagar (via CASCADE) o histórico de subtask_completions.
+  /// [keepCompleted]: true mantém o `completed` global gravado (rotinas,
+  /// cujo estado é por data); false grava o `completed` da lista (avulsas).
+  Future<void> syncSubtasks(
+    int taskId,
+    List<Subtask> subtasks, {
+    required bool keepCompleted,
+  }) async {
     final db = await database;
-    await db.delete('subtasks', where: 'task_id = ?', whereArgs: [taskId]);
+    await db.transaction((txn) async {
+      final existingRows = await txn.query(
+        'subtasks',
+        columns: ['id'],
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+      );
+      final existingIds = existingRows.map((r) => r['id'] as int).toSet();
+      final keptIds = <int>{};
+
+      for (final sub in subtasks) {
+        final id = sub.id;
+        if (id != null && existingIds.contains(id)) {
+          keptIds.add(id);
+          await txn.update(
+            'subtasks',
+            {
+              'title': sub.title,
+              if (!keepCompleted) 'completed': sub.completed ? 1 : 0,
+            },
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        } else {
+          await txn.insert(
+            'subtasks',
+            sub.copyWith(taskId: taskId).toMap()..remove('id'),
+          );
+        }
+      }
+
+      for (final id in existingIds.difference(keptIds)) {
+        await txn.delete('subtasks', where: 'id = ?', whereArgs: [id]);
+      }
+    });
   }
 
   // ─── helpers internos ─────────────────────────────────────

@@ -41,7 +41,8 @@ class TaskService {
 
     final all = <Task>[];
     for (var day = 1; day <= 7; day++) {
-      all.addAll(await getTasksForDate(WeekdayUtils.dateInWeek(weekStart, day)));
+      all.addAll(
+          await getTasksForDate(WeekdayUtils.dateInWeek(weekStart, day)));
     }
     return all;
   }
@@ -49,10 +50,6 @@ class TaskService {
   Future<List<Task>> getTasksForWeekday(int weekday, {DateTime? weekStart}) {
     final ref = weekStart ?? WeekdayUtils.weekStart(DateTime.now());
     return getTasksForDate(WeekdayUtils.dateInWeek(ref, weekday));
-  }
-
-  Future<List<Task>> getArchivedTasks() async {
-    return await _db.getArchivedTasks();
   }
 
   Future<Task?> getTaskById(int id) async {
@@ -82,10 +79,11 @@ class TaskService {
 
   Future<void> updateTask(Task task, List<Subtask> subtasks) async {
     await _db.updateTask(task);
-    await _db.deleteSubtasksByTask(task.id!);
-    for (final sub in subtasks) {
-      await _db.insertSubtask(sub.copyWith(taskId: task.id!));
-    }
+    await _db.syncSubtasks(
+      task.id!,
+      subtasks,
+      keepCompleted: task.isRecurring,
+    );
   }
 
   /// Nova versão da regra recorrente a partir de [effectiveFrom].
@@ -123,10 +121,7 @@ class TaskService {
     }
 
     if (subtasks != null) {
-      await _db.deleteSubtasksByTask(taskId);
-      for (final sub in subtasks) {
-        await _db.insertSubtask(sub.copyWith(taskId: taskId));
-      }
+      await _db.syncSubtasks(taskId, subtasks, keepCompleted: true);
     }
   }
 
@@ -142,7 +137,9 @@ class TaskService {
   }) async {
     final taskId = task.id!;
     final dueDate = task.dueDate;
-    final wasCompleted = task.completed;
+    // Lê do banco: o objeto recebido pode estar desatualizado.
+    final stored = await _db.getTaskById(taskId);
+    final wasCompleted = stored?.completed ?? task.completed;
     final ruleStart = dueDate ?? WeekdayUtils.toDateString(effectiveFrom);
 
     await _db.updateTask(
@@ -158,7 +155,8 @@ class TaskService {
     );
 
     if (wasCompleted) {
-      final completionDate = dueDate ?? WeekdayUtils.toDateString(effectiveFrom);
+      final completionDate =
+          dueDate ?? WeekdayUtils.toDateString(effectiveFrom);
       await _db.setRecurringCompletion(
         taskId: taskId,
         dateStr: completionDate,
@@ -182,12 +180,10 @@ class TaskService {
       time: time,
     );
 
-    await _db.deleteSubtasksByTask(taskId);
-    for (final sub in subtasks) {
-      await _db.insertSubtask(sub.copyWith(taskId: taskId));
-    }
+    await _db.syncSubtasks(taskId, subtasks, keepCompleted: true);
   }
 
+  /// Override pontual. null = herda da regra; '' = removido nesta data.
   Future<void> updateOccurrence(
     int taskId,
     DateTime date, {

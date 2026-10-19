@@ -1,13 +1,16 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../models/task_form_mode.dart';
 import '../models/task.dart';
+import '../services/backup_service.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/task_tile.dart';
-import 'archived_screen.dart';
 import 'task_form_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -19,6 +22,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _taskService = TaskService();
+  final _backupService = BackupService();
   final _searchController = TextEditingController();
 
   List<Task> _tasks = [];
@@ -104,33 +108,37 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openRecurringEditChoice(Task task) async {
-    final choice = await showModalBottomSheet<TaskFormMode>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.event_note_outlined),
-              title: const Text('Editar esta ocorrência'),
-              subtitle: Text(
-                Validators.formatDateDisplay(task.occurrenceDate),
+    // Na busca a data exibida não é uma ocorrência real: só a rotina.
+    final choice = _searchQuery.isNotEmpty
+        ? TaskFormMode.rule
+        : await showModalBottomSheet<TaskFormMode>(
+            context: context,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            builder: (ctx) => SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.event_note_outlined),
+                    title: const Text('Editar esta ocorrência'),
+                    subtitle: Text(
+                      Validators.formatDateDisplay(task.occurrenceDate),
+                    ),
+                    onTap: () => Navigator.pop(ctx, TaskFormMode.occurrence),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.repeat_rounded),
+                    title: const Text('Editar rotina'),
+                    subtitle: const Text(
+                        'Dias, horário e regra a partir de uma data'),
+                    onTap: () => Navigator.pop(ctx, TaskFormMode.rule),
+                  ),
+                ],
               ),
-              onTap: () => Navigator.pop(ctx, TaskFormMode.occurrence),
             ),
-            ListTile(
-              leading: const Icon(Icons.repeat_rounded),
-              title: const Text('Editar rotina'),
-              subtitle: const Text('Dias, horário e regra a partir de uma data'),
-              onTap: () => Navigator.pop(ctx, TaskFormMode.rule),
-            ),
-          ],
-        ),
-      ),
-    );
+          );
 
     if (choice == null || !mounted) return;
 
@@ -139,9 +147,8 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => TaskFormScreen(
           task: task,
           mode: choice,
-          occurrenceDate: choice == TaskFormMode.occurrence
-              ? task.occurrenceDate
-              : null,
+          occurrenceDate:
+              choice == TaskFormMode.occurrence ? task.occurrenceDate : null,
           ruleEffectiveFromDefault: _selectedDate,
         ),
         fullscreenDialog: true,
@@ -150,14 +157,49 @@ class _HomeScreenState extends State<HomeScreen> {
     if (result == true) _loadTasks(query: _searchQuery);
   }
 
-  Future<void> _openArchived() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const ArchivedScreen()),
-    );
+  /// Conclusão só até hoje — evita marcar a rotina de semanas futuras.
+  bool get _canCompleteSelectedDate {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return !_selectedDate.isAfter(today);
   }
 
   Future<void> _confirmDelete(Task task) async {
-    final isOccurrenceCancel = task.isRecurring && task.occurrenceDate != null;
+    var isOccurrenceCancel = false;
+    if (task.isRecurring) {
+      final choice = await showModalBottomSheet<bool>(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.event_busy_outlined),
+                title: const Text('Excluir esta ocorrência'),
+                subtitle: Text(
+                  Validators.formatDateDisplay(task.occurrenceDate),
+                ),
+                onTap: () => Navigator.pop(ctx, true),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_forever_outlined,
+                  color: AppTheme.danger,
+                ),
+                title: const Text('Excluir rotina inteira'),
+                subtitle: const Text('Remove todos os dias e o histórico'),
+                onTap: () => Navigator.pop(ctx, false),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (choice == null || !mounted) return;
+      isOccurrenceCancel = choice;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -170,7 +212,9 @@ class _HomeScreenState extends State<HomeScreen> {
         content: Text(
           isOccurrenceCancel
               ? 'A ocorrência "${task.effectiveTitle}" em ${Validators.formatDateDisplay(task.occurrenceDate)} será removida desta data. A rotina continuará nos outros dias.'
-              : 'A tarefa "${task.title}" será removida permanentemente. Esta ação não pode ser desfeita.',
+              : task.isRecurring
+                  ? 'A rotina "${task.title}" será removida de todos os dias, com todo o histórico de conclusões. Esta ação não pode ser desfeita.'
+                  : 'A tarefa "${task.title}" será removida permanentemente. Esta ação não pode ser desfeita.',
           style: const TextStyle(color: AppTheme.textSecondary),
         ),
         actions: [
@@ -192,7 +236,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirmed == true) {
       if (isOccurrenceCancel) {
-        await _taskService.cancelOccurrence(task.id!, _selectedDate);
+        await _taskService.cancelOccurrence(
+          task.id!,
+          DateTime.parse(task.occurrenceDate!),
+        );
       } else {
         await _taskService.deleteTask(task.id!);
       }
@@ -201,9 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              isOccurrenceCancel
-                  ? 'Ocorrência excluída.'
-                  : 'Tarefa excluída.',
+              isOccurrenceCancel ? 'Ocorrência excluída.' : 'Tarefa excluída.',
             ),
             backgroundColor: AppTheme.danger,
             behavior: SnackBarBehavior.floating,
@@ -214,6 +259,87 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    }
+  }
+
+  void _showMessage(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? AppTheme.danger : AppTheme.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+  Future<void> _exportTasks() async {
+    try {
+      final json = await _backupService.exportToJson();
+      final stamp = WeekdayUtils.todayString();
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Salvar backup',
+        fileName: 'app_task_backup_$stamp.json',
+        bytes: utf8.encode(json),
+      );
+      if (path != null) _showMessage('Backup exportado.');
+    } catch (e) {
+      _showMessage('Erro ao exportar: $e', isError: true);
+    }
+  }
+
+  Future<void> _importTasks() async {
+    final FilePickerResult? picked;
+    try {
+      picked = await FilePicker.platform.pickFiles(withData: true);
+    } catch (e) {
+      _showMessage('Erro ao abrir arquivo: $e', isError: true);
+      return;
+    }
+    final bytes = picked?.files.single.bytes;
+    if (bytes == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Importar backup?',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'Todas as tarefas atuais serão SUBSTITUÍDAS pelas do backup. '
+          'Esta ação não pode ser desfeita.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Substituir',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final count = await _backupService.importFromJson(utf8.decode(bytes));
+      _showMessage('$count tarefa(s) importada(s).');
+      _loadTasks(query: _searchQuery);
+    } on BackupFormatException catch (e) {
+      _showMessage(e.message, isError: true);
+    } on FormatException {
+      _showMessage('Arquivo não está em UTF-8.', isError: true);
     }
   }
 
@@ -268,10 +394,29 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.archive_outlined),
-            tooltip: 'Arquivadas',
-            onPressed: _openArchived,
+          PopupMenuButton<_BackupAction>(
+            tooltip: 'Backup',
+            onSelected: (action) => action == _BackupAction.export
+                ? _exportTasks()
+                : _importTasks(),
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: _BackupAction.export,
+                child: ListTile(
+                  leading: Icon(Icons.upload_file_rounded),
+                  title: Text('Exportar tarefas'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: _BackupAction.import,
+                child: ListTile(
+                  leading: Icon(Icons.download_rounded),
+                  title: Text('Importar tarefas'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
         bottom: PreferredSize(
@@ -347,14 +492,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           itemCount: _tasks.length,
                           itemBuilder: (_, i) {
                             final task = _tasks[i];
+                            // Busca é só consulta: sem data de referência
+                            // confiável para concluir ou excluir.
+                            final canAct = !isSearching;
+                            final canComplete =
+                                canAct && _canCompleteSelectedDate;
                             return TaskTile(
                               task: task,
                               onEdit: () => _openForm(task: task),
-                              onDelete: () => _confirmDelete(task),
-                              onToggleCompleted: (val) =>
-                                  _toggleTask(task, val),
-                              onToggleSubtask: (idx) =>
-                                  _toggleSubtask(task, idx),
+                              onDelete:
+                                  canAct ? () => _confirmDelete(task) : null,
+                              onToggleCompleted: canComplete
+                                  ? (val) => _toggleTask(task, val)
+                                  : null,
+                              onToggleSubtask: canComplete
+                                  ? (idx) => _toggleSubtask(task, idx)
+                                  : null,
                             );
                           },
                         ),
@@ -545,3 +698,5 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+enum _BackupAction { export, import }

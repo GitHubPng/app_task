@@ -67,7 +67,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           : (t.description ?? '');
       _isRecurring = t.isRecurring || _isRuleEdit;
       _selectedDate = t.dueDate;
-      _selectedTime = _isOccurrenceEdit ? t.effectiveTime : t.time;
+      final time = _isOccurrenceEdit ? t.effectiveTime : t.time;
+      // '' = horário removido na ocorrência; no formulário é "sem horário".
+      _selectedTime = (time == null || time.isEmpty) ? null : time;
       _selectedDays.addAll(
         _isOccurrenceEdit || _isRuleEdit
             ? t.displayRecurringDaysList
@@ -80,8 +82,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         _ruleEffectiveFrom = WeekdayUtils.toDateString(defaultDate);
       }
     } else {
-      // Nova tarefa: dia de hoje pré-marcado na rotina.
-      _selectedDays.add(DateTime.now().weekday);
+      // Nova tarefa: hoje pré-marcado na rotina e como data da avulsa.
+      final now = DateTime.now();
+      _selectedDays.add(now.weekday);
+      _selectedDate = WeekdayUtils.toDateString(now);
     }
   }
 
@@ -124,9 +128,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   Future<void> _pickDate() async {
     final now = DateTime.now();
-    final initial = _selectedDate != null
-        ? DateTime.tryParse(_selectedDate!) ?? now
-        : now;
+    final initial =
+        _selectedDate != null ? DateTime.tryParse(_selectedDate!) ?? now : now;
 
     final picked = await showDatePicker(
       context: context,
@@ -212,6 +215,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       return;
     }
 
+    if (!_isRecurring && _selectedDate == null) {
+      _showSnack('Selecione a data da tarefa avulsa.', isError: true);
+      return;
+    }
+
     // RN02: data não retroativa (só avulsas novas).
     if (!_isRecurring &&
         !_isEditMode &&
@@ -225,20 +233,30 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
     try {
       final now = DateTime.now().toIso8601String();
-      final recurringDays =
-          _isRecurring ? WeekdayUtils.daysToStorage(_selectedDays.toList()) : null;
+      final recurringDays = _isRecurring
+          ? WeekdayUtils.daysToStorage(_selectedDays.toList())
+          : null;
 
       if (_isEditMode) {
         if (_isOccurrenceEdit) {
+          final t = widget.task!;
           final date = DateTime.parse(widget.occurrenceDate!);
+          // Override só do que difere da regra; '' = removido nesta data.
           await _taskService.updateOccurrence(
-            widget.task!.id!,
+            t.id!,
             date,
-            title: _titleController.text.trim(),
-            description: _descriptionController.text.trim().isEmpty
-                ? null
-                : _descriptionController.text.trim(),
-            time: _selectedTime,
+            title: _overrideOrNull(
+              _titleController.text.trim(),
+              t.ruleTitleForDate ?? t.title,
+            ),
+            description: _overrideOrNull(
+              _descriptionController.text.trim(),
+              t.ruleDescriptionForDate ?? t.description,
+            ),
+            time: _overrideOrNull(
+              _selectedTime ?? '',
+              t.ruleTimeForDate ?? t.time,
+            ),
           );
           if (mounted) {
             _showSnack('Ocorrência atualizada!');
@@ -291,7 +309,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
             isRecurring: _isRecurring,
             recurringDays: recurringDays,
             time: _selectedTime,
-            archived: widget.task!.archived,
           );
           await _taskService.updateTask(toSave, _subtasks);
           if (mounted) {
@@ -324,6 +341,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  String? _overrideOrNull(String value, String? ruleValue) {
+    return value == (ruleValue ?? '') ? null : value;
   }
 
   void _showSnack(String msg, {bool isError = false}) {
@@ -492,7 +513,13 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   ],
                   selected: {_isRecurring},
                   onSelectionChanged: (set) {
-                    setState(() => _isRecurring = set.first);
+                    setState(() {
+                      _isRecurring = set.first;
+                      if (!_isRecurring && _selectedDate == null) {
+                        _selectedDate =
+                            WeekdayUtils.toDateString(DateTime.now());
+                      }
+                    });
                   },
                 ),
                 const SizedBox(height: 20),
@@ -529,7 +556,8 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                           padding: EdgeInsets.zero,
                           labelPadding: EdgeInsets.zero,
                           side: BorderSide(
-                            color: selected ? AppTheme.primary : AppTheme.border,
+                            color:
+                                selected ? AppTheme.primary : AppTheme.border,
                           ),
                         ),
                       ),
@@ -537,7 +565,7 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   }),
                 ),
               ] else if (!_isOccurrenceEdit && !_isRuleEdit) ...[
-                _label('Data de Vencimento'),
+                _label('Data *'),
                 const SizedBox(height: 8),
                 GestureDetector(
                   onTap: _pickDate,
@@ -550,13 +578,6 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                           Icons.calendar_month_rounded,
                           color: AppTheme.primary,
                         ),
-                        suffixIcon: _selectedDate != null
-                            ? IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () =>
-                                    setState(() => _selectedDate = null),
-                              )
-                            : null,
                       ),
                       controller: TextEditingController(
                         text: Validators.formatDateDisplay(_selectedDate),
