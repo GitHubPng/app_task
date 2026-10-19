@@ -19,6 +19,9 @@ class BackupService {
   static const _app = 'app_task';
   static const _format = 1;
 
+  /// Primeira versão do banco com backup (v5).
+  static const _minDbVersion = 5;
+
   /// Ordem de inserção respeitando as FKs (pais antes dos filhos).
   static const tables = [
     'tasks',
@@ -70,10 +73,14 @@ class BackupService {
     if (decoded['format'] != _format) {
       throw BackupFormatException('Formato de backup não suportado.');
     }
-    if (decoded['dbVersion'] != DatabaseHelper.schemaVersion) {
+    // Versões antigas só não têm colunas novas (ficam NULL na importação).
+    final version = decoded['dbVersion'];
+    if (version is! int ||
+        version < _minDbVersion ||
+        version > DatabaseHelper.schemaVersion) {
       throw BackupFormatException(
-        'Backup de outra versão do banco '
-        '(${decoded['dbVersion']}, esperado ${DatabaseHelper.schemaVersion}).',
+        'Backup de versão do banco não suportada ($version; '
+        'aceito $_minDbVersion a ${DatabaseHelper.schemaVersion}).',
       );
     }
 

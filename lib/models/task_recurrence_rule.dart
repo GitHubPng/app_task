@@ -7,6 +7,9 @@ class TaskRecurrenceRule {
   String title;
   String? description;
   String? time;
+  String? endTime;
+  String? breakStart;
+  String? breakEnd;
 
   TaskRecurrenceRule({
     this.id,
@@ -16,6 +19,9 @@ class TaskRecurrenceRule {
     required this.title,
     this.description,
     this.time,
+    this.endTime,
+    this.breakStart,
+    this.breakEnd,
   });
 
   List<int> get recurringDaysList {
@@ -36,6 +42,9 @@ class TaskRecurrenceRule {
       'title': title,
       'description': description,
       'time': time,
+      'end_time': endTime,
+      'break_start': breakStart,
+      'break_end': breakEnd,
     };
   }
 
@@ -48,6 +57,9 @@ class TaskRecurrenceRule {
       title: map['title'] as String,
       description: map['description'] as String?,
       time: map['time'] as String?,
+      endTime: map['end_time'] as String?,
+      breakStart: map['break_start'] as String?,
+      breakEnd: map['break_end'] as String?,
     );
   }
 }

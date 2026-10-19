@@ -13,7 +13,7 @@ import '../utils/weekday_utils.dart';
 const kLegacyRuleEffectiveFrom = '1970-01-01';
 
 class DatabaseHelper {
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   static DatabaseHelper instance = DatabaseHelper._internal();
 
@@ -63,7 +63,10 @@ class DatabaseHelper {
         created_at TEXT NOT NULL,
         is_recurring INTEGER DEFAULT 0,
         recurring_days TEXT,
-        time TEXT
+        time TEXT,
+        end_time TEXT,
+        break_start TEXT,
+        break_end TEXT
       )
     ''');
 
@@ -98,6 +101,9 @@ class DatabaseHelper {
         title TEXT,
         description TEXT,
         time TEXT,
+        end_time TEXT,
+        break_start TEXT,
+        break_end TEXT,
         cancelled INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
         UNIQUE(task_id, occurrence_date)
@@ -126,6 +132,9 @@ class DatabaseHelper {
         title TEXT NOT NULL,
         description TEXT,
         time TEXT,
+        end_time TEXT,
+        break_start TEXT,
+        break_end TEXT,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
         UNIQUE(task_id, effective_from)
       )
@@ -255,6 +264,20 @@ class DatabaseHelper {
         SET archived = 0, completed = 1
         WHERE archived = 1
       ''');
+    }
+
+    if (oldVersion < 6) {
+      // Intervalo de horário: fim e pausa opcionais.
+      for (final table in [
+        'tasks',
+        'task_recurrence_rules',
+        'task_occurrences',
+      ]) {
+        if (!await _tableExists(db, table)) continue;
+        for (final column in ['end_time', 'break_start', 'break_end']) {
+          await _addColumnIfMissing(db, table, column, 'TEXT');
+        }
+      }
     }
   }
 
@@ -407,6 +430,9 @@ class DatabaseHelper {
     required String title,
     String? description,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
   }) async {
     final db = await database;
     final existing = await db.query(
@@ -421,6 +447,9 @@ class DatabaseHelper {
       'title': title,
       'description': description,
       'time': time,
+      'end_time': endTime,
+      'break_start': breakStart,
+      'break_end': breakEnd,
     };
 
     if (existing.isNotEmpty) {
@@ -482,17 +511,23 @@ class DatabaseHelper {
     String? title,
     String? description,
     String? time,
+    String? endTime,
+    String? breakStart,
+    String? breakEnd,
   }) async {
     final db = await database;
     final existing = await getOccurrence(taskId, dateStr);
 
     // Sem override e sem linha: nada a gravar (linha vazia viraria âncora).
-    if (existing == null &&
-        title == null &&
-        description == null &&
-        time == null) {
-      return;
-    }
+    final hasOverride = [
+      title,
+      description,
+      time,
+      endTime,
+      breakStart,
+      breakEnd
+    ].any((v) => v != null);
+    if (existing == null && !hasOverride) return;
 
     if (existing != null) {
       await db.update(
@@ -501,6 +536,9 @@ class DatabaseHelper {
           'title': title,
           'description': description,
           'time': time,
+          'end_time': endTime,
+          'break_start': breakStart,
+          'break_end': breakEnd,
           'cancelled': 0,
         },
         where: 'id = ?',
@@ -515,6 +553,9 @@ class DatabaseHelper {
           title: title,
           description: description,
           time: time,
+          endTime: endTime,
+          breakStart: breakStart,
+          breakEnd: breakEnd,
         ).toMap()
           ..remove('id'),
       );
@@ -748,7 +789,12 @@ class DatabaseHelper {
   void _applyRuleToTask(Task task, TaskRecurrenceRule rule) {
     task.ruleTitleForDate = rule.title;
     task.ruleDescriptionForDate = rule.description;
-    task.ruleTimeForDate = rule.time;
+    // '' (não null): a versão da regra sem horário não herda o valor
+    // atual de tasks, que pode ser de uma versão posterior.
+    task.ruleTimeForDate = rule.time ?? '';
+    task.ruleEndTimeForDate = rule.endTime ?? '';
+    task.ruleBreakStartForDate = rule.breakStart ?? '';
+    task.ruleBreakEndForDate = rule.breakEnd ?? '';
     task.ruleRecurringDaysForDate = rule.recurringDays;
   }
 
@@ -765,12 +811,18 @@ class DatabaseHelper {
       if (occurrence.description != null) {
         task.occurrenceDescriptionOverride = occurrence.description;
       }
-      if (occurrence.time != null) {
-        task.occurrenceTimeOverride = occurrence.time;
-      }
-      task.isOccurrenceOverride = occurrence.title != null ||
-          occurrence.description != null ||
-          occurrence.time != null;
+      task.occurrenceTimeOverride = occurrence.time;
+      task.occurrenceEndTimeOverride = occurrence.endTime;
+      task.occurrenceBreakStartOverride = occurrence.breakStart;
+      task.occurrenceBreakEndOverride = occurrence.breakEnd;
+      task.isOccurrenceOverride = [
+        occurrence.title,
+        occurrence.description,
+        occurrence.time,
+        occurrence.endTime,
+        occurrence.breakStart,
+        occurrence.breakEnd,
+      ].any((v) => v != null);
     }
 
     task.completed = await isRecurringCompletedOn(task.id!, dateStr);
