@@ -7,6 +7,7 @@ import '../utils/time_range.dart';
 import 'notification_service.dart';
 import 'reminder_planner.dart';
 import 'reminder_scheduler.dart';
+import 'stats.dart';
 import '../utils/weekday_utils.dart';
 
 class TaskService {
@@ -266,6 +267,22 @@ class TaskService {
       }
     }
     return conflicts;
+  }
+
+  /// % cumprido das últimas [weeks] semanas, até [today] inclusive,
+  /// com as mesmas tarefas efetivas que a home mostra em cada dia.
+  Future<List<WeekStats>> weeklyStats({DateTime? today, int weeks = 8}) async {
+    final now = today ?? DateTime.now();
+    final end = DateTime(now.year, now.month, now.day);
+    final start =
+        WeekdayUtils.addWeeks(WeekdayUtils.weekStart(end), -(weeks - 1));
+    final tasksByDay = <DateTime, List<Task>>{};
+    for (var day = start;
+        !day.isAfter(end);
+        day = DateTime(day.year, day.month, day.day + 1)) {
+      tasksByDay[day] = await getTasksForDate(day);
+    }
+    return computeWeekStats(tasksByDay, end, weeks: weeks);
   }
 
   /// Recalcula e agenda os avisos da janela. Nunca lança: falha do
