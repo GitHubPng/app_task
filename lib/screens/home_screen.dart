@@ -14,6 +14,7 @@ import '../utils/validators.dart';
 import '../utils/weekday_utils.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/task_tile.dart';
+import 'stats_screen.dart';
 import 'task_form_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -437,6 +438,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart_rounded),
+            tooltip: 'Estatísticas',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const StatsScreen()),
+            ),
+          ),
           PopupMenuButton<_BackupAction>(
             tooltip: 'Backup',
             onSelected: (action) => action == _BackupAction.export

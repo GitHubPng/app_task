@@ -202,6 +202,7 @@ flutter run
 | RF14 | Exportar / importar tarefas (JSON) | ✅ |
 | RF15 | Lembrete por tarefa (na hora a 1 h antes) | ✅ |
 | RF16 | "Próximo aviso" na home | ✅ |
+| RF17 | Estatísticas: % cumprido na semana e nas últimas 8 | ✅ |
 
 ---
 
