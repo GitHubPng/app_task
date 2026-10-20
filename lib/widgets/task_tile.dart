@@ -193,7 +193,14 @@ class TaskTile extends StatelessWidget {
 
     final time = task.effectiveRange.label;
     if (time != null) {
-      chips.add(_metaChip(Icons.schedule_rounded, time));
+      chips.add(
+        _metaChip(
+          task.reminderEnabled
+              ? Icons.notifications_active_outlined
+              : Icons.schedule_rounded,
+          time,
+        ),
+      );
     }
 
     if (task.isRecurring) {

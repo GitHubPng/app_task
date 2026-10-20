@@ -24,6 +24,10 @@ class Task {
   String? breakStart;
   String? breakEnd;
 
+  /// Lembrete antes do início (por tarefa, igual em todos os dias).
+  bool reminderEnabled;
+  int? reminderMinutesBefore;
+
   // ─── Campos runtime (agenda / ocorrência) ─────────────────
 
   /// Data concreta exibida na agenda (YYYY-MM-DD).
@@ -66,6 +70,8 @@ class Task {
     this.endTime,
     this.breakStart,
     this.breakEnd,
+    this.reminderEnabled = false,
+    this.reminderMinutesBefore,
     this.occurrenceDate,
     this.occurrenceId,
     this.isOccurrenceOverride = false,
@@ -155,6 +161,8 @@ class Task {
       'end_time': endTime,
       'break_start': breakStart,
       'break_end': breakEnd,
+      'reminder_enabled': reminderEnabled ? 1 : 0,
+      'reminder_minutes_before': reminderMinutesBefore,
     };
   }
 
@@ -173,6 +181,8 @@ class Task {
       endTime: map['end_time'] as String?,
       breakStart: map['break_start'] as String?,
       breakEnd: map['break_end'] as String?,
+      reminderEnabled: (map['reminder_enabled'] as int? ?? 0) == 1,
+      reminderMinutesBefore: map['reminder_minutes_before'] as int?,
     );
   }
 
@@ -190,6 +200,8 @@ class Task {
     String? endTime,
     String? breakStart,
     String? breakEnd,
+    bool? reminderEnabled,
+    int? reminderMinutesBefore,
     String? occurrenceDate,
     int? occurrenceId,
     bool? isOccurrenceOverride,
@@ -222,6 +234,9 @@ class Task {
       endTime: clearEndTime ? null : (endTime ?? this.endTime),
       breakStart: clearBreak ? null : (breakStart ?? this.breakStart),
       breakEnd: clearBreak ? null : (breakEnd ?? this.breakEnd),
+      reminderEnabled: reminderEnabled ?? this.reminderEnabled,
+      reminderMinutesBefore:
+          reminderMinutesBefore ?? this.reminderMinutesBefore,
       occurrenceDate: occurrenceDate ?? this.occurrenceDate,
       occurrenceId: occurrenceId ?? this.occurrenceId,
       isOccurrenceOverride: isOccurrenceOverride ?? this.isOccurrenceOverride,

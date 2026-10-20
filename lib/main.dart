@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'services/notification_service.dart';
 import 'screens/splash_screen.dart';
 import 'utils/app_theme.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await NotificationService.instance.init();
+  } catch (e) {
+    // Sem notificações o app continua funcionando.
+    debugPrint('Falha ao iniciar notificações: $e');
+  }
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

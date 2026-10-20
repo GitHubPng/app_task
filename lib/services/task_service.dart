@@ -1,13 +1,24 @@
+import 'package:flutter/foundation.dart';
+
 import '../database/database_helper.dart';
 import '../models/task.dart';
 import '../models/subtask.dart';
 import '../utils/time_range.dart';
+import 'notification_service.dart';
+import 'reminder_planner.dart';
+import 'reminder_scheduler.dart';
 import '../utils/weekday_utils.dart';
 
 class TaskService {
   final DatabaseHelper _db;
+  final ReminderScheduler? _scheduler;
 
-  TaskService({DatabaseHelper? db}) : _db = db ?? DatabaseHelper.instance;
+  /// Dias de avisos agendados a partir de hoje.
+  static const reminderWindowDays = 14;
+
+  TaskService({DatabaseHelper? db, ReminderScheduler? scheduler})
+      : _db = db ?? DatabaseHelper.instance,
+        _scheduler = scheduler;
 
   // ─── TASKS ───────────────────────────────────────────────
 
@@ -101,6 +112,8 @@ class TaskService {
     String? endTime,
     String? breakStart,
     String? breakEnd,
+    bool? reminderEnabled,
+    int? reminderMinutesBefore,
     List<Subtask>? subtasks,
   }) async {
     final effectiveStr = WeekdayUtils.toDateString(effectiveFrom);
@@ -131,6 +144,8 @@ class TaskService {
           clearDueDate: true,
           clearEndTime: endTime == null,
           clearBreak: breakStart == null,
+          reminderEnabled: reminderEnabled,
+          reminderMinutesBefore: reminderMinutesBefore,
         ),
       );
     }
@@ -151,6 +166,8 @@ class TaskService {
     String? endTime,
     String? breakStart,
     String? breakEnd,
+    bool? reminderEnabled,
+    int? reminderMinutesBefore,
     required List<Subtask> subtasks,
   }) async {
     final taskId = task.id!;
@@ -174,6 +191,8 @@ class TaskService {
         clearDueDate: true,
         clearEndTime: endTime == null,
         clearBreak: breakStart == null,
+        reminderEnabled: reminderEnabled,
+        reminderMinutesBefore: reminderMinutesBefore,
       ),
     );
 
@@ -247,6 +266,27 @@ class TaskService {
       }
     }
     return conflicts;
+  }
+
+  /// Recalcula e agenda os avisos da janela. Nunca lança: falha do
+  /// agendador volta como erro, com lista vazia (nada foi agendado).
+  Future<ReminderSyncResult> syncReminders({DateTime? now}) async {
+    final current = now ?? DateTime.now();
+    final today = DateTime(current.year, current.month, current.day);
+    final tasksByDay = <DateTime, List<Task>>{};
+    for (var i = 0; i < reminderWindowDays; i++) {
+      final day = DateTime(today.year, today.month, today.day + i);
+      tasksByDay[day] = await getTasksForDate(day);
+    }
+    final planned = planReminders(tasksByDay, current);
+
+    try {
+      await (_scheduler ?? NotificationService.instance).replaceAll(planned);
+      return ReminderSyncResult(planned);
+    } catch (e) {
+      debugPrint('Falha ao agendar lembretes: $e');
+      return ReminderSyncResult(const [], e);
+    }
   }
 
   /// Datas dos [weekdays] (1=Seg … 7=Dom) na semana de [effectiveFrom].

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/task_form_mode.dart';
 import '../models/task.dart';
 import '../services/backup_service.dart';
+import '../services/reminder_planner.dart';
 import '../services/task_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/time_range.dart';
@@ -28,6 +29,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Recalcula "Agora"/"Pausa" a cada minuto.
   Timer? _clock;
+
+  /// Avisos agendados no último sync (para "Próximo aviso").
+  List<PlannedReminder> _reminders = const [];
+
+  /// Erro do último agendamento (mostrado em vez do próximo aviso).
+  Object? _reminderError;
   final _searchController = TextEditingController();
 
   List<Task> _tasks = [];
@@ -50,8 +57,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedWeekStart = WeekdayUtils.weekStart(now);
     _selectedWeekday = now.weekday;
     _loadTasks();
+    _syncReminders();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted && _isSelectedDateToday) setState(() {});
+      if (mounted) setState(() {});
     });
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
@@ -85,6 +93,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _syncReminders() async {
+    final result = await _taskService.syncReminders();
+    if (!mounted) return;
+    setState(() {
+      _reminders = result.scheduled;
+      _reminderError = result.error;
+    });
+  }
+
+  /// Recarrega a lista e reagenda os avisos (após qualquer mudança).
+  void _refreshAfterChange() {
+    _loadTasks(query: _searchQuery);
+    _syncReminders();
+  }
+
   void _goToToday() {
     final now = DateTime.now();
     setState(() {
@@ -113,7 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fullscreenDialog: true,
       ),
     );
-    if (result == true) _loadTasks(query: _searchQuery);
+    if (result == true) _refreshAfterChange();
   }
 
   Future<void> _openRecurringEditChoice(Task task) async {
@@ -163,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fullscreenDialog: true,
       ),
     );
-    if (result == true) _loadTasks(query: _searchQuery);
+    if (result == true) _refreshAfterChange();
   }
 
   bool get _isSelectedDateToday =>
@@ -263,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         await _taskService.deleteTask(task.id!);
       }
-      _loadTasks(query: _searchQuery);
+      _refreshAfterChange();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -355,7 +378,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final count = await _backupService.importFromJson(utf8.decode(bytes));
       _showMessage('$count tarefa(s) importada(s).');
-      _loadTasks(query: _searchQuery);
+      _refreshAfterChange();
     } on BackupFormatException catch (e) {
       _showMessage(e.message, isError: true);
     } on FormatException {
@@ -369,7 +392,7 @@ class _HomeScreenState extends State<HomeScreen> {
       completed: completed,
       date: _selectedDate,
     );
-    _loadTasks(query: _searchQuery);
+    _refreshAfterChange();
   }
 
   Future<void> _toggleSubtask(Task task, int subtaskIndex) async {
@@ -506,6 +529,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     children: [
                       if (!isSearching) _buildStatsBar(),
+                      if (!isSearching) _buildNextReminder(),
                       Expanded(
                         child: ListView.builder(
                           padding: const EdgeInsets.only(top: 8, bottom: 100),
@@ -657,6 +681,51 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }),
+      ),
+    );
+  }
+
+  Widget _buildNextReminder() {
+    if (_reminderError != null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+        child: Text(
+          'Não foi possível agendar os lembretes: $_reminderError',
+          style: const TextStyle(fontSize: 12, color: AppTheme.danger),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+    final next = nextReminder(_reminders, DateTime.now());
+    if (next == null) return const SizedBox.shrink();
+    final at = next.fireAt;
+    final hhmm = '${at.hour.toString().padLeft(2, '0')}:'
+        '${at.minute.toString().padLeft(2, '0')}';
+    final day = '${WeekdayUtils.shortLabel(at.weekday)} '
+        '${at.day.toString().padLeft(2, '0')}/'
+        '${at.month.toString().padLeft(2, '0')}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.notifications_active_outlined,
+            size: 14,
+            color: AppTheme.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Próximo aviso: ${next.title} às $hhmm · $day',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppTheme.textSecondary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }

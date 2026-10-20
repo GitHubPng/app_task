@@ -144,6 +144,8 @@ void main() {
           endTime: '15:00',
           breakStart: '12:00',
           breakEnd: '13:00',
+          reminderEnabled: true,
+          reminderMinutesBefore: 30,
         ),
         [],
       );
@@ -151,9 +153,9 @@ void main() {
           as Map<String, dynamic>;
     }
 
-    test('roundtrip v6 preserva fim e pausa', () async {
+    test('roundtrip preserva fim, pausa e lembrete', () async {
       final map = await exportWithRange();
-      expect(map['dbVersion'], 6);
+      expect(map['dbVersion'], 7);
       await BackupService(db: target).importFromJson(jsonEncode(map));
 
       final trabalho = (await loadTaskOnDate(
@@ -164,6 +166,27 @@ void main() {
       expect(trabalho.effectiveEndTime, '15:00');
       expect(trabalho.effectiveBreakStart, '12:00');
       expect(trabalho.effectiveBreakEnd, '13:00');
+      expect(trabalho.reminderEnabled, isTrue);
+      expect(trabalho.reminderMinutesBefore, 30);
+    });
+
+    test('backup v6 (sem colunas de lembrete) importa desligado', () async {
+      final map = await exportWithRange();
+      map['dbVersion'] = 6;
+      for (final row
+          in (map['data'] as Map<String, dynamic>)['tasks'] as List) {
+        (row as Map<String, dynamic>)
+          ..remove('reminder_enabled')
+          ..remove('reminder_minutes_before');
+      }
+      await BackupService(db: target).importFromJson(jsonEncode(map));
+      final trabalho = (await loadTaskOnDate(
+        TaskService(db: target),
+        date(2026, 8, 31),
+        'Trabalho',
+      ))!;
+      expect(trabalho.reminderEnabled, isFalse);
+      expect(trabalho.reminderMinutesBefore, isNull);
     });
 
     test('backup v5 (sem colunas de intervalo) importa', () async {
@@ -191,7 +214,7 @@ void main() {
       expect(trabalho.effectiveEndTime, isNull);
     });
 
-    for (final version in [4, 7]) {
+    for (final version in [4, 8]) {
       test('dbVersion $version é recusado', () async {
         final map = await exportWithRange();
         map['dbVersion'] = version;

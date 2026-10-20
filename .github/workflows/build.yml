@@ -3,6 +3,8 @@ name: Build APK
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
 
 jobs:
   build:
@@ -20,6 +22,8 @@ jobs:
           flutter-version: '3.22.0'
 
       - run: flutter pub get
+
+      - run: flutter test
 
       # Chave fixa: sem ela cada execução assina com uma chave de debug nova
       # e o APK não instala por cima do anterior. Falha em vez de gerar APK
