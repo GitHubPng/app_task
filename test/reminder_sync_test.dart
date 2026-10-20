@@ -72,7 +72,8 @@ void main() {
 
   test('agenda 14 dias só das tarefas com lembrete', () async {
     final result = await service.syncReminders(now: now);
-    expect(result, same(scheduler.last));
+    expect(result.error, isNull);
+    expect(result.scheduled, same(scheduler.last));
     // seg/qua/sex entre 31/08 e 13/09 → 6 avisos, todos do Treino.
     expect(scheduler.last!.length, 6);
     expect(scheduler.last!.every((r) => r.title == 'Treino'), isTrue);
@@ -98,9 +99,10 @@ void main() {
     expect(fireDays(), isNot(contains(DateTime(2026, 8, 31))));
   });
 
-  test('falha do agendador não quebra o fluxo', () async {
+  test('falha do agendador é reportada, sem fingir que agendou', () async {
     scheduler.fail = true;
     final result = await service.syncReminders(now: now);
-    expect(result.length, 6);
+    expect(result.scheduled, isEmpty);
+    expect(result.error, isNotNull);
   });
 }

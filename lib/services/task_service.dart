@@ -268,9 +268,9 @@ class TaskService {
     return conflicts;
   }
 
-  /// Recalcula e agenda os avisos da janela. Devolve o que foi planejado;
-  /// falha do agendador é registrada e não interrompe o fluxo.
-  Future<List<PlannedReminder>> syncReminders({DateTime? now}) async {
+  /// Recalcula e agenda os avisos da janela. Nunca lança: falha do
+  /// agendador volta como erro, com lista vazia (nada foi agendado).
+  Future<ReminderSyncResult> syncReminders({DateTime? now}) async {
     final current = now ?? DateTime.now();
     final today = DateTime(current.year, current.month, current.day);
     final tasksByDay = <DateTime, List<Task>>{};
@@ -282,10 +282,11 @@ class TaskService {
 
     try {
       await (_scheduler ?? NotificationService.instance).replaceAll(planned);
+      return ReminderSyncResult(planned);
     } catch (e) {
       debugPrint('Falha ao agendar lembretes: $e');
+      return ReminderSyncResult(const [], e);
     }
-    return planned;
   }
 
   /// Datas dos [weekdays] (1=Seg … 7=Dom) na semana de [effectiveFrom].

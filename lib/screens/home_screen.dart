@@ -32,6 +32,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Avisos agendados no último sync (para "Próximo aviso").
   List<PlannedReminder> _reminders = const [];
+
+  /// Erro do último agendamento (mostrado em vez do próximo aviso).
+  Object? _reminderError;
   final _searchController = TextEditingController();
 
   List<Task> _tasks = [];
@@ -91,8 +94,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _syncReminders() async {
-    final reminders = await _taskService.syncReminders();
-    if (mounted) setState(() => _reminders = reminders);
+    final result = await _taskService.syncReminders();
+    if (!mounted) return;
+    setState(() {
+      _reminders = result.scheduled;
+      _reminderError = result.error;
+    });
   }
 
   /// Recarrega a lista e reagenda os avisos (após qualquer mudança).
@@ -679,6 +686,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNextReminder() {
+    if (_reminderError != null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+        child: Text(
+          'Não foi possível agendar os lembretes: $_reminderError',
+          style: const TextStyle(fontSize: 12, color: AppTheme.danger),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
     final next = nextReminder(_reminders, DateTime.now());
     if (next == null) return const SizedBox.shrink();
     final at = next.fireAt;
